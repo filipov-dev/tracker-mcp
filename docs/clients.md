@@ -51,7 +51,7 @@ tracker-mcp connect claude-code --toolsets issues,queues,boards,users,filters
 
 ## Другие клиенты: ручное подключение
 
-`connect` настраивает только Claude Code и Codex. Любой клиент, который умеет запускать stdio MCP-серверы, подключается вручную.
+`connect` настраивает только Claude Code и Codex. Любой клиент, который умеет запускать stdio MCP-серверы, подключается вручную. Ниже — общий порядок, затем особенности [Google Antigravity](#google-antigravity), [Kimi Code](#kimi-code) и [ZCode](#zcode).
 
 1. Сохраните токен и организацию в отдельный профиль:
 
@@ -96,6 +96,75 @@ claude mcp add --scope user tracker -- "$(command -v tracker-mcp)" serve --profi
 command = "/opt/homebrew/bin/tracker-mcp"
 args = ["serve", "--profile", "codex"]
 ```
+
+### Google Antigravity
+
+Профиль: `tracker-mcp auth login --profile antigravity`.
+
+Глобальный конфиг MCP — `~/.gemini/config/mcp_config.json`, общий для Antigravity App, IDE и CLI (версия 2.x). Antigravity IDE 1.x читает `~/.gemini/antigravity/mcp_config.json`. Если не уверены, какой файл действует, откройте его из интерфейса: в IDE — «…» на панели агента → MCP Servers → Manage MCP Servers → View raw config, в App — Customizations → Installed → MCP Servers → Copy Config File Path. Конфиг одного проекта — `<проект>/.agents/mcp_config.json`.
+
+```json
+{
+  "mcpServers": {
+    "tracker": {
+      "command": "/opt/homebrew/bin/tracker-mcp",
+      "args": ["serve", "--profile", "antigravity"]
+    }
+  }
+}
+```
+
+После сохранения нажмите Refresh в Manage MCP Servers (в App — Restart у сервера, в CLI — `/mcp`). Сервер `tracker` должен появиться со списком инструментов.
+
+Antigravity не включает больше 100 инструментов. Только на чтение с наборами по умолчанию их 60, а с `--allow-write` — 102: сузьте наборы, например `--toolsets issues,queues,users` (87 инструментов), или отключите лишние полем `disabledTools` записи.
+
+### Kimi Code
+
+Профиль: `tracker-mcp auth login --profile kimi`.
+
+Kimi Code CLI читает серверы из `~/.kimi-code/mcp.json` (или `$KIMI_CODE_HOME/mcp.json`), конфиг одного проекта — `.kimi-code/mcp.json`. Запись можно добавить командой `/mcp-config` в сессии или вписать в файл:
+
+```json
+{
+  "mcpServers": {
+    "tracker": {
+      "command": "/opt/homebrew/bin/tracker-mcp",
+      "args": ["serve", "--profile", "kimi"]
+    }
+  }
+}
+```
+
+Сервер появляется только в новой сессии; проверьте его командой `/mcp`. Инструменты в Kimi называются `mcp__tracker__<инструмент>`, вызовы без постоянного разрешения клиент подтверждает.
+
+Предыдущий клиент, kimi-cli, хранит тот же формат в `~/.kimi/mcp.json` и регистрирует сервер командой:
+
+```bash
+kimi mcp add --transport stdio tracker -- "$(command -v tracker-mcp)" serve --profile kimi
+```
+
+### ZCode
+
+Профиль: `tracker-mcp auth login --profile zcode`.
+
+Сервер добавляется в Settings → MCP servers → New MCP server: область User (все проекты) или Workspace (текущий проект), имя `tracker`, тип stdio, в `command` — абсолютный путь к `tracker-mcp`, в `args` — `serve --profile zcode`. Проверьте, что переключатель сервера включён.
+
+Панель пишет в `~/.zcode/cli/config.json` (проект — `<проект>/.zcode/config.json`). Серверы там лежат под ключом `mcp.servers`, а не `mcpServers`:
+
+```json
+{
+  "mcp": {
+    "servers": {
+      "tracker": {
+        "command": "/opt/homebrew/bin/tracker-mcp",
+        "args": ["serve", "--profile", "zcode"]
+      }
+    }
+  }
+}
+```
+
+Импорт серверов из Claude Code и Codex на той же странице перенесёт их запись вместе с профилем: агент ZCode будет работать с токеном другого клиента. Чтобы у ZCode был свой токен, добавляйте запись вручную.
 
 ## Рабочий каталог и локальные файлы
 

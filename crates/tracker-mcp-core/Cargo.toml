@@ -13,7 +13,7 @@ regex = "1.13.1"
 rmcp = { version = "3.8.0", default-features = false, features = ["server"] }
 serde_json = "1.0.154"
 tracing = "0.1.44"
-tracker-api = { version = "0.1.0", path = "../tracker-api" }
+tracker-api = { version = "0.1.1", path = "../tracker-api" }
 
 [dev-dependencies]
 rmcp = { version = "3.8.0", default-features = false, features = ["client", "server"] }

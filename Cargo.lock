@@ -2800,7 +2800,7 @@ dependencies = [
 
 [[package]]
 name = "tracker-api"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "insta",
  "keyring",
@@ -2819,7 +2819,7 @@ dependencies = [
 
 [[package]]
 name = "tracker-mcp"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "anyhow",
  "axum",
@@ -2844,7 +2844,7 @@ dependencies = [
 
 [[package]]
 name = "tracker-mcp-core"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "percent-encoding",
  "regex",

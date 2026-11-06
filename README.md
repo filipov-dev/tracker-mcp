@@ -80,7 +80,7 @@ tracker-mcp connect codex --allow-write
 
    Укажите в `command` абсолютный путь из `command -v tracker-mcp`. Чтобы разрешить запись или удаление, добавьте в `args` `"--allow-write"` или `"--allow-destructive"`.
 
-Подробнее: [docs/clients.md](docs/clients.md).
+Пути к конфигурации и особенности Google Antigravity, Kimi Code и ZCode — в [docs/clients.md](docs/clients.md#google-antigravity).
 
 ## HTTP-режим
 

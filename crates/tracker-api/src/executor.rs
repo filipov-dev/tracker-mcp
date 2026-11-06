@@ -923,6 +923,10 @@ fn content_type(response: &reqwest::Response) -> Option<String> {
 
 /// Разбирает `Link: <url>; rel="next", <url>; rel="first"` в пары (адрес, rel).
 /// Значение `rel` из нескольких слов (`rel="next last"`) даёт несколько пар.
+///
+/// Ссылки с шаблоном URI (RFC 6570) пропускаются: при страничной выдаче Tracker
+/// присылает `rel="seek"` вида `...&perPage=20{&page}`. Это не адрес страницы, а
+/// шаблон перехода на страницу N, который и так делается параметром `page`.
 fn parse_link_header(value: &str) -> Vec<(String, String)> {
     let mut out = Vec::new();
     let mut rest = value;
@@ -932,6 +936,10 @@ fn parse_link_header(value: &str) -> Vec<(String, String)> {
         let target = after[..close].trim();
         let params_all = &after[close + 1..];
         let end = params_all.find('<').unwrap_or(params_all.len());
+        rest = &params_all[end..];
+        if target.contains(['{', '}']) {
+            continue;
+        }
         for param in params_all[..end].split(';') {
             let Some((key, value)) = param.split_once('=') else {
                 continue;
@@ -944,7 +952,6 @@ fn parse_link_header(value: &str) -> Vec<(String, String)> {
                 out.push((target.to_string(), rel.to_ascii_lowercase()));
             }
         }
-        rest = &params_all[end..];
     }
     out
 }
@@ -1496,6 +1503,29 @@ mod tests {
         );
         assert!(parse_link_header("garbage").is_empty());
         assert!(parse_link_header("<unclosed; rel=next").is_empty());
+    }
+
+    /// Страничная выдача: Tracker присылает first, last и шаблон seek (RFC 6570).
+    #[test]
+    fn link_header_skips_uri_templates() {
+        let links = parse_link_header(
+            "</v3/issues/_search?fields=key&perPage=20>; rel=\"first\", \
+             </v3/issues/_search?fields=key&page=1&perPage=20>; rel=\"last\", \
+             </v3/issues/_search?fields=key&perPage=20{&page}>; rel=\"seek\"",
+        );
+        assert_eq!(
+            links,
+            vec![
+                (
+                    "/v3/issues/_search?fields=key&perPage=20".to_string(),
+                    "first".to_string()
+                ),
+                (
+                    "/v3/issues/_search?fields=key&page=1&perPage=20".to_string(),
+                    "last".to_string()
+                ),
+            ]
+        );
     }
 
     #[test]
