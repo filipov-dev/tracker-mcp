@@ -10,6 +10,7 @@ use std::time::Duration;
 use anyhow::{Context, anyhow, bail};
 use reqwest::header::{AUTHORIZATION, HeaderValue, USER_AGENT};
 use serde_json::Value;
+use tracker_api::executor::AuthScheme;
 use tracker_api::{ApiToken, Organization};
 
 /// Адрес Tracker API.
@@ -39,12 +40,23 @@ impl fmt::Display for CurrentUser {
 
 /// Проверка токена. В тестах подменяется, чтобы не ходить в сеть.
 pub trait TokenVerifier {
-    /// Текущий пользователь для токена в организации `org`.
+    /// Текущий пользователь для токена схемы `scheme` (`OAuth` или IAM `Bearer`) в
+    /// организации `org`.
+    async fn current_user_as(
+        &self,
+        scheme: AuthScheme,
+        token: &ApiToken,
+        org: &Organization,
+    ) -> anyhow::Result<CurrentUser>;
+
+    /// Текущий пользователь для OAuth-токена.
     async fn current_user(
         &self,
         token: &ApiToken,
         org: &Organization,
-    ) -> anyhow::Result<CurrentUser>;
+    ) -> anyhow::Result<CurrentUser> {
+        self.current_user_as(AuthScheme::OAuth, token, org).await
+    }
 }
 
 /// Проверка через Tracker API.
@@ -72,10 +84,11 @@ impl ApiVerifier {
     }
 }
 
-/// Заголовок `Authorization` для OAuth-токена. Помечен как чувствительный, чтобы `reqwest`
-/// не выводил его значение; ошибка не содержит токена.
-fn authorization(token: &ApiToken) -> anyhow::Result<HeaderValue> {
-    let mut value = HeaderValue::from_str(&format!("OAuth {}", token.expose())).map_err(|_| {
+/// Заголовок `Authorization` (`OAuth` или `Bearer`). Помечен как чувствительный, чтобы
+/// `reqwest` не выводил его значение; ошибка не содержит токена.
+fn authorization(scheme: AuthScheme, token: &ApiToken) -> anyhow::Result<HeaderValue> {
+    let value = format!("{} {}", scheme.prefix(), token.expose());
+    let mut value = HeaderValue::from_str(&value).map_err(|_| {
         anyhow!("the token contains characters that are not allowed in HTTP headers")
     })?;
     value.set_sensitive(true);
@@ -83,8 +96,9 @@ fn authorization(token: &ApiToken) -> anyhow::Result<HeaderValue> {
 }
 
 impl TokenVerifier for ApiVerifier {
-    async fn current_user(
+    async fn current_user_as(
         &self,
+        scheme: AuthScheme,
         token: &ApiToken,
         org: &Organization,
     ) -> anyhow::Result<CurrentUser> {
@@ -98,7 +112,7 @@ impl TokenVerifier for ApiVerifier {
         let (org_header, org_id) = org.header();
         let response = client
             .get(self.url())
-            .header(AUTHORIZATION, authorization(token)?)
+            .header(AUTHORIZATION, authorization(scheme, token)?)
             .header(org_header, org_id)
             .header(
                 USER_AGENT,
@@ -111,7 +125,7 @@ impl TokenVerifier for ApiVerifier {
         let body = response.bytes().await.unwrap_or_default();
         let json: Option<Value> = serde_json::from_slice(&body).ok();
         if !(200..300).contains(&status) {
-            return Err(status_error(status, json.as_ref(), token, org));
+            return Err(status_error(scheme, status, json.as_ref(), token, org));
         }
         match json.as_ref().and_then(current_user) {
             Some(user) => Ok(user),
@@ -123,6 +137,7 @@ impl TokenVerifier for ApiVerifier {
 /// Понятная ошибка по коду ответа. Из тела берутся только `errorMessages` Tracker, без
 /// значения токена.
 fn status_error(
+    scheme: AuthScheme,
     status: u16,
     body: Option<&Value>,
     token: &ApiToken,
@@ -143,6 +158,11 @@ fn status_error(
     let details = details.unwrap_or_default();
     let header = org.kind().header_name();
     match status {
+        401 if scheme == AuthScheme::Iam => anyhow!(
+            "Tracker rejected the IAM token (HTTP 401). Make sure the yc account (a federated \
+             or service account) belongs to this Yandex Cloud organization and has access to \
+             Tracker.{details}"
+        ),
         401 => anyhow!(
             "Tracker rejected the token (HTTP 401). Make sure it was copied completely and has \
              not expired or been revoked.{details}"
@@ -193,8 +213,9 @@ pub mod testing {
     }
 
     impl TokenVerifier for FakeVerifier {
-        async fn current_user(
+        async fn current_user_as(
             &self,
+            scheme: AuthScheme,
             token: &ApiToken,
             org: &Organization,
         ) -> anyhow::Result<CurrentUser> {
@@ -204,7 +225,7 @@ pub mod testing {
                     display: Some("Test User".to_owned()),
                 })
             } else {
-                Err(status_error(401, None, token, org))
+                Err(status_error(scheme, 401, None, token, org))
             }
         }
     }
@@ -244,6 +265,39 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(user.to_string(), "jdoe (John Doe)");
+    }
+
+    #[tokio::test]
+    async fn iam_token_is_sent_as_bearer() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path(MYSELF_PATH))
+            .and(header("authorization", "Bearer iam-token"))
+            .and(header("x-cloud-org-id", "cloud-org"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({"login": "fed"})))
+            .expect(1)
+            .mount(&server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path(MYSELF_PATH))
+            .and(header("authorization", "Bearer stale-iam"))
+            .respond_with(ResponseTemplate::new(401))
+            .mount(&server)
+            .await;
+        let org = Organization::new(OrgKind::Cloud, "cloud-org").unwrap();
+        let verifier = ApiVerifier::with_base_url(server.uri());
+        let user = verifier
+            .current_user_as(AuthScheme::Iam, &ApiToken::new("iam-token"), &org)
+            .await
+            .unwrap();
+        assert_eq!(user.to_string(), "fed");
+        let err = verifier
+            .current_user_as(AuthScheme::Iam, &ApiToken::new("stale-iam"), &org)
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("rejected the IAM token"), "{err}");
+        assert!(!err.contains("stale-iam"), "{err}");
     }
 
     #[tokio::test]
@@ -344,7 +398,14 @@ mod tests {
     #[test]
     fn long_details_are_truncated() {
         let body = json!({"errorMessages": ["x".repeat(1000)]});
-        let err = status_error(500, Some(&body), &ApiToken::new("t"), &org360()).to_string();
+        let err = status_error(
+            AuthScheme::OAuth,
+            500,
+            Some(&body),
+            &ApiToken::new("t"),
+            &org360(),
+        )
+        .to_string();
         assert!(err.contains("HTTP 500"), "{err}");
         assert!(err.len() < 500, "{err}");
     }

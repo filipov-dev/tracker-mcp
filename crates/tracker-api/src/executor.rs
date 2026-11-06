@@ -7,8 +7,12 @@
 //!   приклеивается к `base_url`, поэтому запрос не уходит на другой хост;
 //! - заголовки `Authorization` и `X-Org-ID`/`X-Cloud-Org-ID` формируются только здесь,
 //!   запрос не может их переопределить; заголовок авторизации помечен как чувствительный;
-//! - токен задаётся при создании клиента (stdio: из системного хранилища) или для каждого
-//!   запроса через [`ApiClient::with_credentials`] (HTTP-режим: токен из запроса агента);
+//! - токен задаётся при создании клиента (stdio: из системного хранилища), берётся из
+//!   источника IAM-токенов [`IamTokens`] перед каждым запросом (stdio, профиль с IAM) или
+//!   задаётся для каждого запроса через [`ApiClient::with_credentials`] (HTTP-режим: токен из
+//!   запроса агента);
+//! - с IAM-токеном ответ 401 один раз повторяется с новым токеном (правила — у функции
+//!   `retry_after_401`);
 //! - редиректы выполняются только в пределах того же origin;
 //! - размер тела ответа ограничен `max_response_bytes`, ошибки — [`ERROR_BODY_LIMIT`];
 //! - при 429 (и 503 для идемпотентных методов) запрос повторяется с учётом `Retry-After`.
@@ -16,6 +20,7 @@
 use std::collections::BTreeMap;
 use std::fmt;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::time::Duration;
 
 use reqwest::header::{self, HeaderMap, HeaderName, HeaderValue};
@@ -24,6 +29,7 @@ use serde::Serialize;
 use serde_json::Value;
 use tokio::io::AsyncWriteExt;
 
+use crate::iam::{IamError, IamTokens};
 use crate::token::ApiToken;
 
 pub use crate::path::{render_path, validate_relative_path};
@@ -78,7 +84,8 @@ pub enum AuthScheme {
 }
 
 impl AuthScheme {
-    fn prefix(self) -> &'static str {
+    /// Схема в заголовке `Authorization`: `OAuth` или `Bearer`.
+    pub fn prefix(self) -> &'static str {
         match self {
             Self::OAuth => "OAuth",
             Self::Iam => "Bearer",
@@ -182,6 +189,10 @@ pub struct ClientConfig {
     /// копию с токеном ([`ApiClient::with_credentials`]), а без токена
     /// [`ApiClient::execute`] возвращает [`ApiError::MissingToken`] и ничего не отправляет.
     pub credentials: Option<Credentials>,
+    /// Источник IAM-токенов (профиль с IAM): токен берётся перед каждым запросом и
+    /// обновляется по сроку, а после 401 — один раз заново. Если заданы и `credentials`,
+    /// действуют `credentials`.
+    pub iam: Option<Arc<IamTokens>>,
     /// Организация. `None` — запрос не отправляется ([`ApiError::MissingOrg`]).
     pub org: Option<OrgId>,
     /// Таймаут одной попытки, включая чтение тела (и запись в `save_to`).
@@ -200,6 +211,7 @@ impl ClientConfig {
         Ok(Self {
             base_url,
             credentials,
+            iam: None,
             org,
             timeout: DEFAULT_TIMEOUT,
             max_response_bytes: DEFAULT_MAX_RESPONSE_BYTES,
@@ -417,6 +429,10 @@ pub enum ApiError {
     /// У клиента нет токена (см. [`ClientConfig::credentials`]); запрос не отправлялся.
     #[error("нет токена Tracker для запроса")]
     MissingToken,
+    /// Не удалось получить IAM-токен через `yc` (см. [`ClientConfig::iam`]); запрос не
+    /// отправлялся (или не повторялся после 401). Текст без токена и без stderr `yc` целиком.
+    #[error("не удалось получить IAM-токен: {0}")]
+    TokenUnavailable(String),
     /// Не указана организация (см. [`ClientConfig::org`]); запрос не отправлялся.
     #[error("не указана организация Tracker (X-Org-ID или X-Cloud-Org-ID)")]
     MissingOrg,
@@ -456,7 +472,8 @@ impl ApiError {
 pub struct ApiClient {
     config: ClientConfig,
     http: reqwest::Client,
-    /// Готовый заголовок `Authorization`, помечен как sensitive. `None` — токена нет.
+    /// Готовый заголовок `Authorization`, помечен как sensitive. `None` — постоянного токена
+    /// нет: токен берётся из [`ClientConfig::iam`] или его нет вовсе.
     auth: Option<HeaderValue>,
     /// Готовый заголовок организации. `None` — организация не указана.
     org: Option<(HeaderName, HeaderValue)>,
@@ -529,6 +546,8 @@ impl ApiClient {
         let auth = auth_header(&credentials)?;
         let mut copy = self.clone();
         copy.config.credentials = Some(credentials);
+        // Токен запроса заменяет и источник IAM-токенов: у копии один источник.
+        copy.config.iam = None;
         copy.auth = Some(auth);
         Ok(copy)
     }
@@ -565,7 +584,9 @@ impl ApiClient {
         request: ApiRequest,
         max_response_bytes: usize,
     ) -> Result<ApiResponse, ApiError> {
-        let auth = self.auth.clone().ok_or(ApiError::MissingToken)?;
+        if self.auth.is_none() && self.config.iam.is_none() {
+            return Err(ApiError::MissingToken);
+        }
         let (org_name, org_value) = self.org.clone().ok_or(ApiError::MissingOrg)?;
         let url = self.build_url(&request.path, &request.query)?;
         if let Some(save_to) = &request.save_to {
@@ -574,11 +595,15 @@ impl ApiClient {
         if let RequestBody::Multipart(parts) = &request.body {
             check_multipart(parts)?;
         }
+        // IAM-токен — после всех проверок запроса: `yc` не запускается ради запроса, который
+        // всё равно не уйдёт.
+        let (mut auth, mut iam_token) = self.authorization().await?;
 
         tracing::debug!(method = request.method.as_str(), path = %request.path, "запрос к Tracker API");
 
         let retry = self.config.retry;
         let mut attempt: u32 = 0;
+        let mut reauthorized = false;
         let response = loop {
             let builder = self
                 .http
@@ -593,6 +618,21 @@ impl ApiClient {
             let status = response.status();
             if status.is_success() {
                 break response;
+            }
+
+            if status == StatusCode::UNAUTHORIZED
+                && !reauthorized
+                && let (Some(iam), Some(rejected)) = (&self.config.iam, &iam_token)
+                && retry_after_401(request.method, response.url() == &url)
+            {
+                reauthorized = true;
+                if let Some(fresh) = iam.refresh_after_unauthorized(rejected).await? {
+                    tracing::debug!("Tracker API вернул 401, повтор с новым IAM-токеном");
+                    auth = auth_header(&Credentials::iam(fresh.clone()))?;
+                    iam_token = Some(fresh);
+                    drop(response);
+                    continue;
+                }
             }
 
             let retry_after = parse_retry_after(response.headers());
@@ -635,6 +675,19 @@ impl ApiClient {
             body,
             pagination,
         })
+    }
+
+    /// Заголовок `Authorization` для запроса и IAM-токен, если заголовок собран из него.
+    async fn authorization(&self) -> Result<(HeaderValue, Option<ApiToken>), ApiError> {
+        if let Some(auth) = &self.auth {
+            return Ok((auth.clone(), None));
+        }
+        let Some(iam) = &self.config.iam else {
+            return Err(ApiError::MissingToken);
+        };
+        let token = iam.token().await?;
+        let auth = auth_header(&Credentials::iam(token.clone()))?;
+        Ok((auth, Some(token)))
     }
 
     /// Собирает URL: префикс пути из `base_url` + проверенный относительный путь + query.
@@ -806,15 +859,47 @@ impl ApiClient {
         Ok(ResponseBody::Text(self.redact(lossy_prefix(&bytes))))
     }
 
-    /// Защита в глубину: если сервер вдруг отразил токен в тексте, вырезаем его.
-    fn redact(&self, text: String) -> String {
-        let Some(token) = self.config.credentials.as_ref().map(|c| c.token.expose()) else {
-            return text;
-        };
-        if token.is_empty() || !text.contains(token) {
-            return text;
+    /// Защита в глубину: если сервер вдруг отразил токен в тексте, вырезаем его. С IAM
+    /// вырезаются и недавние прежние токены (например, отклонённый в ответе 401).
+    fn redact(&self, mut text: String) -> String {
+        let iam_tokens = self
+            .config
+            .iam
+            .as_ref()
+            .map(|iam| iam.known_tokens())
+            .unwrap_or_default();
+        let tokens = self
+            .config
+            .credentials
+            .iter()
+            .map(|c| &c.token)
+            .chain(iam_tokens.iter());
+        for token in tokens {
+            let token = token.expose();
+            if !token.is_empty() && text.contains(token) {
+                text = text.replace(token, "***");
+            }
         }
-        text.replace(token, "***")
+        text
+    }
+}
+
+/// Можно ли повторить запрос с новым IAM-токеном после ответа 401.
+///
+/// Ответ 401 Tracker возвращает на этапе аутентификации, до выполнения операции: токен
+/// проверяется раньше, чем запрос попадает в обработчик, поэтому 401 означает, что запрос
+/// ничего не изменил. Это верно для запроса, на который пришёл ответ, — но не для цепочки
+/// редиректов: если первый запрос выполнился и ответил редиректом (например, `303` после
+/// `POST`), а 401 пришёл уже на адрес редиректа, то исходный запрос мог изменить данные.
+/// Поэтому идемпотентные методы повторяются всегда, а остальные (`POST`, `PATCH`) — только
+/// если 401 пришёл на сам запрос, без редиректов (`same_url`).
+fn retry_after_401(method: HttpMethod, same_url: bool) -> bool {
+    method.is_idempotent() || same_url
+}
+
+impl From<IamError> for ApiError {
+    fn from(err: IamError) -> Self {
+        Self::TokenUnavailable(err.to_string())
     }
 }
 

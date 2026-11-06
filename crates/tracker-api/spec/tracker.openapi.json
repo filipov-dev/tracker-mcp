@@ -4,6 +4,216 @@
     "title": "Yandex Tracker API v3",
     "version": "2026-11-06",
     "summary": "Неофициальная спецификация, собранная из справочника API Яндекс Трекера.",
+    "x-source-pages": [
+      "about-api",
+      "access",
+      "admin/create-issue-type",
+      "admin/create-priority",
+      "admin/create-resolution",
+      "admin/create-status",
+      "admin/get-issue-types",
+      "admin/get-priorities",
+      "admin/get-resolutions",
+      "admin/get-statuses",
+      "admin/patch-issue-type",
+      "admin/patch-priority",
+      "admin/patch-resolution",
+      "admin/patch-status",
+      "boards/archive-sprint",
+      "boards/delete-board",
+      "boards/delete-column",
+      "boards/delete-sprint",
+      "boards/get-board",
+      "boards/get-boards",
+      "boards/get-boards-paginate",
+      "boards/get-column",
+      "boards/get-columns",
+      "boards/get-sprint",
+      "boards/get-sprints",
+      "boards/patch-board",
+      "boards/patch-column",
+      "boards/patch-sprint",
+      "boards/post-board",
+      "boards/post-column",
+      "boards/post-sprint",
+      "boards/start-sprint",
+      "bulkchange/bulk-move-info",
+      "bulkchange/bulk-move-issues",
+      "bulkchange/bulk-transition",
+      "bulkchange/bulk-update-issues",
+      "common-format",
+      "dashboards/copy-dashboard",
+      "dashboards/create-dashboard",
+      "dashboards/create-dashboard-widget",
+      "dashboards/get-dashboard",
+      "dashboards/get-dashboard-permissions",
+      "dashboards/get-widget",
+      "dashboards/import-widget",
+      "dashboards/search-dashboards",
+      "dashboards/update-dashboard",
+      "dashboards/update-dashboard-permissions",
+      "dashboards/update-widget",
+      "delete-macros",
+      "entities/about-entities",
+      "entities/attachments/add-attachment",
+      "entities/attachments/delete-attachment",
+      "entities/attachments/get-all-attachments",
+      "entities/attachments/get-attachment",
+      "entities/bulkchange-entities",
+      "entities/checklists/add-checklist",
+      "entities/checklists/delete-checklist",
+      "entities/checklists/delete-checklist-item",
+      "entities/checklists/move-checklist-item",
+      "entities/checklists/patch-checklist",
+      "entities/checklists/patch-checklist-item",
+      "entities/comments/add-comment",
+      "entities/comments/delete-comment",
+      "entities/comments/get-all-comments",
+      "entities/comments/get-comment",
+      "entities/comments/patch-comment",
+      "entities/create-entity",
+      "entities/delete-entity",
+      "entities/get-access",
+      "entities/get-entity",
+      "entities/get-events-relative",
+      "entities/get-permissions",
+      "entities/keyresults",
+      "entities/links/add-links",
+      "entities/links/delete-link",
+      "entities/links/get-links",
+      "entities/metric",
+      "entities/patch-access",
+      "entities/patch-permissions",
+      "entities/search-entities",
+      "entities/update-entity",
+      "error-codes",
+      "filters/create-filter",
+      "filters/delete-filter",
+      "filters/get-filter",
+      "filters/update-filter",
+      "gaps/delete-gaps",
+      "gaps/post-gaps",
+      "gaps/search-gaps",
+      "get-macros",
+      "get-macroses",
+      "import/import-attachments",
+      "import/import-comments",
+      "import/import-links",
+      "import/import-ticket",
+      "import/import-worklogs",
+      "issues/add-checklist-item",
+      "issues/add-comment",
+      "issues/add-external-link",
+      "issues/add-reaction-to-comment",
+      "issues/count-issues",
+      "issues/create-field",
+      "issues/create-issue",
+      "issues/create-issue-field-category",
+      "issues/create-report",
+      "issues/delete-attachment",
+      "issues/delete-checklist",
+      "issues/delete-checklist-item",
+      "issues/delete-comment",
+      "issues/delete-external-link",
+      "issues/delete-link-issue",
+      "issues/delete-worklog",
+      "issues/edit-checklist",
+      "issues/edit-comment",
+      "issues/fields",
+      "issues/get-applications",
+      "issues/get-attachment",
+      "issues/get-attachment-info",
+      "issues/get-attachment-preview",
+      "issues/get-attachments-list",
+      "issues/get-changelog",
+      "issues/get-checklist",
+      "issues/get-comment",
+      "issues/get-comments",
+      "issues/get-external-links",
+      "issues/get-global-fields",
+      "issues/get-issue",
+      "issues/get-issue-fields",
+      "issues/get-links",
+      "issues/get-links-paginate",
+      "issues/get-suggest",
+      "issues/get-transitions",
+      "issues/get-worklog",
+      "issues/issue-worklog",
+      "issues/link-issue",
+      "issues/move-issue",
+      "issues/new-transition",
+      "issues/new-worklog",
+      "issues/patch-issue",
+      "issues/patch-issue-field-category",
+      "issues/patch-issue-field-name",
+      "issues/patch-issue-field-value",
+      "issues/patch-worklog",
+      "issues/post-attachment",
+      "issues/query2",
+      "issues/request-fields",
+      "issues/response-fields",
+      "issues/search-issues",
+      "issues/search-release",
+      "issues/search-reports",
+      "issues/temp-attachment",
+      "patch-macros",
+      "post-macros",
+      "projects/create-project",
+      "projects/delete-project",
+      "projects/get-project",
+      "projects/get-project-queues",
+      "projects/get-projects",
+      "projects/update-project",
+      "queues/change-trigger",
+      "queues/change-trigger-actions",
+      "queues/change-trigger-conditions",
+      "queues/create-autoaction",
+      "queues/create-local-field",
+      "queues/create-queue",
+      "queues/create-trigger",
+      "queues/create-version",
+      "queues/delete-component",
+      "queues/delete-queue",
+      "queues/delete-tag",
+      "queues/delete-version",
+      "queues/edit-local-field",
+      "queues/get-autoaction",
+      "queues/get-component",
+      "queues/get-component-group-access",
+      "queues/get-component-user-access",
+      "queues/get-components",
+      "queues/get-fields",
+      "queues/get-group-access",
+      "queues/get-info-local-field",
+      "queues/get-local-fields",
+      "queues/get-queue",
+      "queues/get-queue-components",
+      "queues/get-queues",
+      "queues/get-tags",
+      "queues/get-trigger",
+      "queues/get-triggers",
+      "queues/get-user-access",
+      "queues/get-version",
+      "queues/get-versions",
+      "queues/manage-access",
+      "queues/patch-component",
+      "queues/post-component",
+      "queues/restore-queue",
+      "queues/update-version",
+      "queues/view-autoaction-logs",
+      "queues/view-trigger-logs",
+      "queues/workflows/delete-workflow",
+      "queues/workflows/get-queue-workflows",
+      "queues/workflows/get-workflow",
+      "queues/workflows/get-workflows",
+      "queues/workflows/patch-workflow",
+      "queues/workflows/patch-workflow-action",
+      "queues/workflows/post-workflow",
+      "users/get-user",
+      "users/get-user-info",
+      "users/get-users",
+      "users/get-users-relative"
+    ],
     "description": "Собрано скриптом `crates/tracker-api/spec/build_openapi.py` из markdown-версий страниц справочника https://yandex.ru/support/tracker/ru/api/about-api. Официальной OpenAPI-спецификации у Трекера нет.\n\nОграничения:\n- схемы ответов описывают основные поля из таблиц «Параметры ответа», в задачах могут быть и пользовательские поля;\n- параметры, тип которых в справочнике описан словами («объект, число или строка»), оставлены без строгого типа, исходное описание типа — в description;\n- имена параметров пути приведены к единому виду, исходное имя из справочника — в `x-docs-name`;\n- места, где справочник расходится с реальным API (форма ответов, обязательные поля, тело освобождения прокрутки), исправлены исключениями в скрипте сборки, список — в `crates/tracker-api/spec/README.md`.\n\n`x-access-level` — уровень доступа операции для MCP-сервера: `read`, `write` или `destructive`."
   },
   "externalDocs": {
@@ -1015,6 +1225,15 @@
             "x-docs-name": "id_доски"
           },
           {
+            "name": "version",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer"
+            },
+            "description": "Текущая версия доски: поле version из ответа на запрос информации о доске. Справочник версию у этого метода не описывает, но перечисляет ответы 412 и 428."
+          },
+          {
             "$ref": "#/components/parameters/XOrgId"
           },
           {
@@ -1415,6 +1634,15 @@
             "x-docs-name": "id"
           },
           {
+            "name": "version",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer"
+            },
+            "description": "Номер текущей версии доски. При указании неактуальной версии доски в ответ на HTTP-запрос придет ответ с ошибкой 412 Precondition Failed.\nСправочник передаёт версию заголовком If-Match; API принимает её и в параметре запроса version."
+          },
+          {
             "$ref": "#/components/parameters/XOrgId"
           },
           {
@@ -1570,6 +1798,15 @@
             },
             "description": "Идентификатор колонки",
             "x-docs-name": "id_колонки"
+          },
+          {
+            "name": "version",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer"
+            },
+            "description": "Номер текущей версии доски.\nСправочник передаёт версию заголовком If-Match; API принимает её и в параметре запроса version."
           },
           {
             "$ref": "#/components/parameters/XOrgId"
@@ -1746,6 +1983,15 @@
             },
             "description": "Идентификатор колонки",
             "x-docs-name": "id_колонки"
+          },
+          {
+            "name": "version",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer"
+            },
+            "description": "Номер текущей версии доски. При указании неактуальной версии доски в ответ на HTTP-запрос придет ответ с ошибкой 412 Precondition Failed.\nСправочник передаёт версию заголовком If-Match; API принимает её и в параметре запроса version."
           },
           {
             "$ref": "#/components/parameters/XOrgId"
@@ -3092,6 +3338,15 @@
             },
             "description": "Идентификатор компонента.",
             "x-docs-name": "id"
+          },
+          {
+            "name": "version",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "number"
+            },
+            "description": "Номер версии компонента."
           },
           {
             "$ref": "#/components/parameters/XOrgId"
@@ -13112,6 +13367,15 @@
             },
             "description": "Идентификатор поля задачи.",
             "x-docs-name": "id"
+          },
+          {
+            "name": "version",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Текущая версия поля задачи."
           },
           {
             "$ref": "#/components/parameters/XOrgId"
@@ -33822,6 +34086,15 @@
             "x-docs-name": "id"
           },
           {
+            "name": "version",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "number"
+            },
+            "description": "Текущая версия триггера."
+          },
+          {
             "$ref": "#/components/parameters/XOrgId"
           },
           {
@@ -35440,6 +35713,15 @@
             "x-docs-name": "идентификатор_спринта"
           },
           {
+            "name": "version",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            },
+            "description": "Версия спринта. Указывается, чтобы избежать потери изменений при одновременном редактировании. Значение параметра version можно получить в ответе на запрос информации о спринте.\nСправочник передаёт версию заголовком If-Match; API принимает её и в параметре запроса version."
+          },
+          {
             "$ref": "#/components/parameters/XOrgId"
           },
           {
@@ -35639,6 +35921,15 @@
             "x-docs-name": "идентификатор_спринта"
           },
           {
+            "name": "version",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer"
+            },
+            "description": "Версия спринта. Указывается, чтобы избежать потери изменений при одновременном редактировании. Значение параметра version можно получить в ответе на запрос информации о спринте.\nСправочник передаёт версию заголовком If-Match; API принимает её и в параметре запроса version."
+          },
+          {
             "$ref": "#/components/parameters/XOrgId"
           },
           {
@@ -35808,6 +36099,15 @@
             },
             "description": "Идентификатор спринта.",
             "x-docs-name": "идентификатор_спринта"
+          },
+          {
+            "name": "version",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer"
+            },
+            "description": "Версия спринта. Указывается, чтобы избежать потери изменений при одновременном редактировании. Значение параметра version можно получить в ответе на запрос информации о спринте.\nСправочник передаёт версию заголовком If-Match; API принимает её и в параметре запроса version."
           },
           {
             "$ref": "#/components/parameters/XOrgId"
@@ -39044,6 +39344,15 @@
             "x-docs-name": "id"
           },
           {
+            "name": "version",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "number"
+            },
+            "description": "Версия рабочего процесса. Используется для предотвращения конфликтов при одновременном изменении. Текущую версию можно узнать с помощью запроса на получение рабочего процесса. Вместо query-параметра можно использовать заголовок `If-Match`."
+          },
+          {
             "$ref": "#/components/parameters/XOrgId"
           },
           {
@@ -39369,6 +39678,15 @@
             },
             "description": "Идентификатор действия внутри шага. Например: `inProgress`, `close`. Список действий для каждого шага можно получить с помощью запроса на получение рабочего процесса.",
             "x-docs-name": "id_действия"
+          },
+          {
+            "name": "version",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "number"
+            },
+            "description": "Версия рабочего процесса. Используется для контроля конкурентных изменений. Текущую версию можно узнать с помощью запроса на получение рабочего процесса."
           },
           {
             "$ref": "#/components/parameters/XOrgId"

@@ -4,7 +4,7 @@
 
 | Крейт | Назначение |
 | --- | --- |
-| `crates/tracker-api` | Спецификация Tracker API, генератор таблицы операций (`build.rs`, `build/`), исполнитель HTTP-запросов, хранилище токенов. |
+| `crates/tracker-api` | Спецификация Tracker API, генератор таблицы операций (`build.rs`, `build/`), исполнитель HTTP-запросов, хранилище токенов, IAM-токены через `yc` (`src/iam.rs`). |
 | `crates/tracker-mcp-core` | MCP-инструменты: реестр, уровни доступа, наборы, `api_request`, `api_search`, вырезание учётных данных, политика файлов. Не зависит от транспорта. |
 | `crates/tracker-mcp` | Бинарник: CLI (`serve`, `connect`, `auth`) и транспорты stdio и HTTP (`src/cli/serve/http_server.rs`). |
 
@@ -19,7 +19,22 @@ cargo clippy --all-targets -- -D warnings
 cargo test
 ```
 
-Тесты не обращаются к реальному Tracker API (HTTP подменяется `wiremock`) и не используют системное хранилище токенов.
+Тесты не обращаются к реальному Tracker API (HTTP подменяется `wiremock`), не используют системное хранилище токенов и не запускают настоящий `yc`: его подменяет скрипт во временном каталоге (тесты IAM — только на Unix), а время — управляемые часы.
+
+Готовые сборки: macOS (universal), Linux x86_64 и aarch64 (статические, musl) и Windows x86_64 (`x86_64-pc-windows-msvc`).
+
+### Windows
+
+Сборка — нативная, целевая платформа `x86_64-pc-windows-msvc`: нужны Visual Studio Build Tools с компонентом «Разработка классических приложений на C++» и `rustup`. Релизный бинарник собирается со статическим CRT, чтобы на машине пользователя не требовался Visual C++ Redistributable:
+
+```powershell
+$env:RUSTFLAGS = '-C target-feature=+crt-static'
+cargo build --release --locked --target x86_64-pc-windows-msvc -p tracker-mcp
+cargo clippy --all-targets --locked --target x86_64-pc-windows-msvc -- -D warnings
+cargo test --locked --target x86_64-pc-windows-msvc
+```
+
+Ветки кода для Windows (хранилище токенов в Credential Manager, запуск `claude.cmd`, сравнение файлов без inode в исполнителе) компилируются или выполняются только там, поэтому проверяйте изменения в них этими командами. С macOS и Linux `cargo check --target x86_64-pc-windows-msvc` без Windows SDK не проходит: C-код `aws-lc-sys` требует заголовков Windows.
 
 Запустить CLI из исходников:
 
@@ -35,6 +50,8 @@ cargo run -p tracker-mcp -- serve --help
 ```bash
 python3 crates/tracker-api/spec/build_openapi.py --cache /tmp/tracker-api-docs
 ```
+
+Проверить, не отстала ли спецификация от справочника (новые и удалённые страницы, операции и параметры; код выхода `3`, если есть разница): `python3 crates/tracker-api/spec/build_openapi.py --check`.
 
 Что внутри спецификации, какие расхождения справочника с реальным API исправлены и что не проверено — в [описании спецификации](../crates/tracker-api/spec/README.md).
 

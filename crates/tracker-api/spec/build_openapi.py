@@ -6,10 +6,15 @@
 Список страниц берётся из llms.txt.
 
 Использование:
-    python3 crates/tracker-api/spec/build_openapi.py --cache <каталог> [--offline] [--out crates/tracker-api/spec/tracker.openapi.json]
+    python3 crates/tracker-api/spec/build_openapi.py [--cache <каталог>] [--offline] [--check] [--out crates/tracker-api/spec/tracker.openapi.json]
 
-Без --offline страницы скачиваются в каталог кеша; с --offline используется
-уже скачанное. Отчёт о том, что не удалось разобрать, печатается в stderr.
+Без --offline страницы скачиваются в каталог кеша (без --cache — во временный
+каталог); с --offline используется уже скачанное. Отчёт о том, что не удалось
+разобрать, печатается в stderr.
+
+С --check файл --out не перезаписывается: свежая сборка сравнивается с ним и
+печатается разница (страницы, операции, параметры). Код выхода: 0 — изменений
+нет, 3 — спецификация отстала от справочника, 1 — ошибка сети или разбора.
 
 Расхождения справочника с реальным API исправляются исключениями в разделе
 «исключения» ниже (RESPONSE_SHAPES, BODY_REQUIRED и соседние таблицы), а не правкой JSON.
@@ -23,6 +28,7 @@ import json
 import os
 import re
 import sys
+import tempfile
 import urllib.request
 from datetime import date
 
@@ -206,6 +212,31 @@ PATH_PARAM_NOTES = {
     "runId": "Идентификатор запуска автодействия: 24 шестнадцатеричных символа.",
 }
 
+# Версия объекта в параметре запроса version вместо заголовка If-Match.
+#
+# Часть страниц (спринты, колонки досок) передаёт версию только заголовком If-Match,
+# а генератор операций не передаёт заголовки, кроме авторизации и организации: без
+# параметра агент не может изменить объект. API принимает версию и параметром version
+# (страницы изменения рабочего процесса и прав дашборда прямо говорят «в параметре
+# version или заголовке If-Match», остальные методы изменения API v3 используют
+# version), поэтому страницам с If-Match параметр добавляется автоматически.
+# Здесь — уточнения: (метод, путь) -> {"required": обязателен ли, "note": описание
+# для страниц, где If-Match не упомянут}.
+VERSION_QUERY_PARAMS: dict[tuple[str, str], dict] = {
+    # Изменение спринта без версии API отклоняет (замечено при работе с API; здесь не
+    # проверялось: для проверки нужен изменяющий запрос).
+    ("PATCH", "/v3/sprints/{sprintId}"): {"required": True},
+    # Справочник версию не описывает, но перечисляет ответы 412 и 428, а страницы колонок
+    # передают в If-Match именно версию доски.
+    ("PATCH", "/v3/boards/{boardId}"): {
+        "note": (
+            "Текущая версия доски: поле version из ответа на запрос информации о доске. "
+            "Справочник версию у этого метода не описывает, но перечисляет ответы 412 и 428."
+        ),
+    },
+}
+VERSION_QUERY_NOTE = "Справочник передаёт версию заголовком If-Match; API принимает её и в параметре запроса version."
+
 # Заголовки постраничной выдачи (из справочника; см. «Не проверено» в README.md).
 PAGINATION_HEADERS = ("XTotalPages", "XTotalCount")
 SCROLL_HEADERS = ("Link", "XScrollId", "XScrollToken", "XTotalCount")
@@ -293,11 +324,31 @@ def fetch(url: str) -> str:
 
 def page_urls(llms: str) -> list[str]:
     urls = re.findall(r"https://yandex\.ru/support/tracker/ru/api/[^\s)]+\.md", llms)
+    if not urls:
+        # Вместо оглавления пришло что-то другое (капча, страница ошибки): пустая
+        # спецификация выглядела бы как удаление всех операций.
+        raise SourceError("в llms.txt нет страниц справочника API")
     return sorted(set(urls))
+
+
+class SourceError(Exception):
+    """Справочник недоступен или отдал не то, что ожидается."""
+
+
+def check_markdown(url: str, text: str) -> str:
+    head = text.lstrip()[:200].lower()
+    if head.startswith("<!doctype") or head.startswith("<html"):
+        raise SourceError(f"{url}: вместо markdown получен HTML (капча или ошибка сайта)")
+    return text
 
 
 def cache_name(url: str) -> str:
     return url[len(DOCS_BASE):].replace("/", "__")
+
+
+def page_name(cache: str) -> str:
+    """Имя страницы в отчётах и в info.x-source-pages: «boards__patch-sprint.md» -> «boards/patch-sprint»."""
+    return cache.replace("__", "/").removesuffix(".md")
 
 
 def load_pages(cache: str, offline: bool) -> dict[str, str]:
@@ -305,7 +356,7 @@ def load_pages(cache: str, offline: bool) -> dict[str, str]:
     llms_path = os.path.join(cache, "llms.txt")
     if not offline:
         with open(llms_path, "w", encoding="utf-8") as fh:
-            fh.write(fetch(LLMS_URL))
+            fh.write(check_markdown(LLMS_URL, fetch(LLMS_URL)))
     with open(llms_path, encoding="utf-8") as fh:
         urls = page_urls(fh.read())
 
@@ -313,7 +364,7 @@ def load_pages(cache: str, offline: bool) -> dict[str, str]:
         path = os.path.join(cache, cache_name(url))
         if not offline:
             with open(path, "w", encoding="utf-8") as fh:
-                fh.write(fetch(url))
+                fh.write(check_markdown(url, fetch(url)))
         with open(path, encoding="utf-8") as fh:
             return cache_name(url), fh.read()
 
@@ -670,7 +721,26 @@ def parse_page(name: str, text: str) -> dict | None:
             ) if re.search(pattern, body)
         ],
         "multipart": "multipart/form-data" in body,
+        "if_match": if_match_text(secs),
     }
+
+
+def if_match_text(secs: list[tuple[str, str]]) -> str | None:
+    """Описание заголовка If-Match из блока «Заголовки», если страница его упоминает."""
+    for title, block in secs:
+        if title != "Заголовки":
+            continue
+        m = re.search(r"^\s*[*-]\s+`If-Match`:\s*(.+)$", block, re.M)
+        if m:
+            text = clean_text(m.group(1)).replace("`", "")
+            return text[:1].upper() + text[1:]
+    return None
+
+
+def url_query_names(url: str) -> list[str]:
+    """Имена параметров запроса в адресе метода: «…/{id}?version=VERSION» -> ["version"]."""
+    query = url.split("?", 1)[1] if "?" in url else ""
+    return re.findall(r"(?:^|&)([A-Za-z]\w*)=", query)
 
 
 def response_block(body: str, secs: list[tuple[str, str]]) -> str:
@@ -801,7 +871,10 @@ def build(pages: dict[str, str]) -> tuple[dict, list[str]]:
             op["externalDocs"] = {"url": docs_url}
             op["x-access-level"] = access_level(method, path)
             params = []
-            unused = [r for k, r in resource_rows.items() if k not in names.values() and k not in names]
+            url_query = url_query_names(url)
+            unused = [
+                r for k, r in resource_rows.items() if k not in names.values() and k not in names and k not in url_query
+            ]
             for new, original in names.items():
                 r = resource_rows.get(original) or resource_rows.get(new)
                 if r is None:
@@ -832,6 +905,29 @@ def build(pages: dict[str, str]) -> tuple[dict, list[str]]:
                 if r["description"]:
                     p["description"] = r["description"]
                 params.append(p)
+            # Параметр из адреса («…?version=VERSION»), описанный в таблице «Ресурс», а не
+            # в «Параметрах запроса» (изменение рабочего процесса, триггера, компонента).
+            for qname in url_query:
+                r = resource_rows.get(qname)
+                if qname in seen or r is None:
+                    continue
+                seen.add(qname)
+                p = {"name": qname, "in": "query", "required": r["required"], "schema": r["schema"] or {"type": "string"}}
+                p["schema"] = QUERY_PARAM_SCHEMAS.get((method, path), {}).get(qname, p["schema"])
+                if r["description"]:
+                    p["description"] = r["description"]
+                params.append(p)
+            version_fix = VERSION_QUERY_PARAMS.get((method, path), {})
+            if "version" not in seen and (page["if_match"] or version_fix.get("note")):
+                seen.add("version")
+                desc = version_fix.get("note") or f"{page['if_match']}\n{VERSION_QUERY_NOTE}"
+                p = {"name": "version", "in": "query", "required": False, "schema": {"type": "integer"}, "description": desc}
+                params.append(p)
+                report.append(f"версия в параметре запроса вместо If-Match: {method} {path}")
+            if "required" in version_fix:
+                for p in params:
+                    if p["name"] == "version":
+                        p["required"] = version_fix["required"]
             params += [{"$ref": "#/components/parameters/XOrgId"}, {"$ref": "#/components/parameters/XCloudOrgId"}]
             op["parameters"] = params
 
@@ -907,6 +1003,9 @@ def build(pages: dict[str, str]) -> tuple[dict, list[str]]:
             "title": "Yandex Tracker API v3",
             "version": date.today().isoformat(),
             "summary": "Неофициальная спецификация, собранная из справочника API Яндекс Трекера.",
+            # Страницы справочника из llms.txt, по которым собрана спецификация: по ним
+            # проверка --check видит новые и удалённые страницы.
+            "x-source-pages": sorted(page_name(name) for name in pages),
             "description": (
                 "Собрано скриптом `crates/tracker-api/spec/build_openapi.py` из markdown-версий страниц справочника "
                 "https://yandex.ru/support/tracker/ru/api/about-api. Официальной OpenAPI-спецификации у Трекера нет.\n\n"
@@ -1009,20 +1108,191 @@ COMMON_ERRORS = {
 }
 
 
+# ---------- проверка расхождений со справочником (--check) ----------
+
+# Коды выхода --check: изменений нет, спецификация отстала, ошибка сети или разбора.
+EXIT_OK, EXIT_ERROR, EXIT_DRIFT = 0, 1, 3
+
+
+def spec_ops(spec: dict) -> dict[tuple[str, str], dict]:
+    return {(m.upper(), path): op for path, item in spec.get("paths", {}).items() for m, op in item.items()}
+
+
+def op_params(op: dict) -> dict[str, dict]:
+    """Параметры и поля тела верхнего уровня: «query version» -> {required, schema, description}."""
+    out = {}
+    for p in op.get("parameters", []):
+        if "$ref" in p:
+            out["ref " + p["$ref"].rsplit("/", 1)[-1]] = {}
+            continue
+        out[f"{p['in']} {p['name']}"] = {k: p.get(k) for k in ("required", "schema", "description")}
+    for media in op.get("requestBody", {}).get("content", {}).values():
+        schema = media.get("schema", {})
+        required = set(schema.get("required", []))
+        for name, prop in schema.get("properties", {}).items():
+            prop = dict(prop)
+            out[f"body {name}"] = {
+                "required": name in required,
+                "description": prop.pop("description", None),
+                "schema": prop,
+            }
+    return out
+
+
+def param_brief(p: dict) -> str:
+    schema = p.get("schema") or {}
+    kind = schema.get("type") or ("anyOf" if "anyOf" in schema else "")
+    parts = [x for x in (kind, "обязательный" if p.get("required") else "") if x]
+    return f" ({', '.join(parts)})" if parts else ""
+
+
+def param_changes(old: dict, new: dict) -> list[str]:
+    out = []
+    for key in sorted(set(old) | set(new)):
+        a, b = old.get(key), new.get(key)
+        if a is None:
+            out.append(f"+ {key}{param_brief(b)}")
+        elif b is None:
+            out.append(f"- {key}{param_brief(a)}")
+        elif a != b:
+            what = []
+            if bool(a.get("required")) != bool(b.get("required")):
+                what.append("обязательный" if b.get("required") else "необязательный")
+            if a.get("schema") != b.get("schema"):
+                what.append("схема")
+            if a.get("description") != b.get("description"):
+                what.append("описание")
+            out.append(f"~ {key}: {', '.join(what)}")
+    return out
+
+
+OP_FIELD_NAMES = {
+    "summary": "заголовок",
+    "description": "описание",
+    "tags": "раздел",
+    "externalDocs": "страница справочника",
+    "x-access-level": "уровень доступа",
+    "requestBody": "тело запроса",
+    "responses": "ответы",
+}
+
+
+def drift(old: dict, new: dict) -> list[str]:
+    """Разница между спецификацией в репозитории (old) и свежей сборкой (new); пусто — изменений нет."""
+    lines: list[str] = []
+
+    def section(title: str, items: list[str]) -> None:
+        if items:
+            lines.append(f"{title} ({len(items)}):")
+            lines.extend(f"  {x}" for x in items)
+
+    old_pages = set(old.get("info", {}).get("x-source-pages", []))
+    new_pages = set(new.get("info", {}).get("x-source-pages", []))
+    if old_pages:
+        section("Новые страницы справочника", [f"+ {x}" for x in sorted(new_pages - old_pages)])
+        section("Удалённые страницы справочника", [f"- {x}" for x in sorted(old_pages - new_pages)])
+    else:
+        lines.append("В спецификации нет списка страниц (info.x-source-pages): страницы не сравниваются.")
+
+    old_ops, new_ops = spec_ops(old), spec_ops(new)
+
+    def title(key: tuple[str, str], op: dict) -> str:
+        return f"{key[0]} {key[1]} ({op.get('operationId')}, {op.get('x-access-level')})"
+
+    section("Новые операции", [f"+ {title(k, new_ops[k])}" for k in sorted(new_ops.keys() - old_ops.keys())])
+    section("Удалённые операции", [f"- {title(k, old_ops[k])}" for k in sorted(old_ops.keys() - new_ops.keys())])
+    renamed, params, other = [], [], []
+    for key in sorted(old_ops.keys() & new_ops.keys()):
+        a, b = old_ops[key], new_ops[key]
+        name = f"{key[0]} {key[1]} ({b.get('operationId')})"
+        if a.get("operationId") != b.get("operationId"):
+            renamed.append(f"~ {key[0]} {key[1]}: {a.get('operationId')} -> {b.get('operationId')}")
+        changes = param_changes(op_params(a), op_params(b))
+        if changes:
+            params.append(f"~ {name}: " + "; ".join(changes))
+        fields = []
+        for field in sorted((set(a) | set(b)) - {"parameters", "operationId"}):
+            if a.get(field) != b.get(field):
+                label = OP_FIELD_NAMES.get(field, field)
+                if field == "x-access-level":
+                    label += f" {a.get(field)} -> {b.get(field)}"
+                fields.append(label)
+        if fields:
+            other.append(f"~ {name}: {', '.join(fields)}")
+    section("Изменён operationId (меняется имя инструмента)", renamed)
+    section("Изменены параметры и поля тела", params)
+    section("Изменено другое", other)
+
+    def rest(spec: dict) -> dict:
+        info = {k: v for k, v in spec.get("info", {}).items() if k not in ("version", "x-source-pages")}
+        return {**{k: v for k, v in spec.items() if k != "paths"}, "info": info}
+
+    a, b = rest(old), rest(new)
+    section("Изменены разделы вне операций", sorted(k for k in set(a) | set(b) if a.get(k) != b.get(k)))
+    return lines
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--cache", required=True, help="каталог для скачанных страниц")
+    ap.add_argument("--cache", help="каталог для скачанных страниц (по умолчанию — временный)")
     ap.add_argument("--offline", action="store_true", help="не скачивать, взять страницы из кеша")
+    ap.add_argument(
+        "--check",
+        action="store_true",
+        help=(
+            "не записывать --out, а сравнить с ним свежую сборку и напечатать разницу; "
+            f"код выхода {EXIT_OK} — изменений нет, {EXIT_DRIFT} — есть, {EXIT_ERROR} — ошибка сети или разбора"
+        ),
+    )
     ap.add_argument("--out", default=os.path.join(os.path.dirname(os.path.abspath(__file__)), "tracker.openapi.json"))
     args = ap.parse_args()
-    pages = load_pages(args.cache, args.offline)
-    spec, report = build(pages)
-    with open(args.out, "w", encoding="utf-8") as fh:
-        json.dump(spec, fh, ensure_ascii=False, indent=2)
-        fh.write("\n")
-    for line in report:
-        print(line, file=sys.stderr)
-    return 0
+    if args.offline and not args.cache:
+        ap.error("для --offline нужен --cache")
+    with tempfile.TemporaryDirectory(prefix="tracker-api-docs-") as tmp:
+        cache = args.cache or tmp
+        try:
+            pages = load_pages(cache, args.offline)
+            spec, report = build(pages)
+        except (OSError, SourceError) as err:
+            # urllib.error.URLError и тайм-ауты — подклассы OSError.
+            print(f"ошибка загрузки справочника: {err}", file=sys.stderr)
+            return EXIT_ERROR
+        except Exception as err:
+            # Сбой разбора (сайт поменял разметку) — ошибка, а не расхождение со справочником.
+            print(f"ошибка разбора справочника: {type(err).__name__}: {err}", file=sys.stderr)
+            return EXIT_ERROR
+        for line in report:
+            print(line, file=sys.stderr)
+        if not args.check:
+            with open(args.out, "w", encoding="utf-8") as fh:
+                json.dump(spec, fh, ensure_ascii=False, indent=2)
+                fh.write("\n")
+            return EXIT_OK
+        fresh = os.path.join(cache, "tracker.openapi.json")
+        with open(fresh, "w", encoding="utf-8") as fh:
+            json.dump(spec, fh, ensure_ascii=False, indent=2)
+            fh.write("\n")
+        try:
+            with open(args.out, encoding="utf-8") as fh:
+                current = json.load(fh)
+        except (OSError, ValueError) as err:
+            print(f"не удалось прочитать {args.out}: {err}", file=sys.stderr)
+            return EXIT_ERROR
+        lines = drift(current, spec)
+        print(
+            f"Справочник: страниц {len(pages)}, операций {len(spec_ops(spec))}; "
+            f"в спецификации: страниц {len(current.get('info', {}).get('x-source-pages', []))}, "
+            f"операций {len(spec_ops(current))}."
+        )
+        if not lines:
+            print("Изменений нет: спецификация совпадает со справочником.")
+            return EXIT_OK
+        for line in lines:
+            print(line)
+        print("Спецификация отстала от справочника: пересоберите её скриптом и обновите обычным PR.")
+        if args.cache:
+            print(f"Свежая сборка: {fresh}")
+        return EXIT_DRIFT
 
 
 if __name__ == "__main__":

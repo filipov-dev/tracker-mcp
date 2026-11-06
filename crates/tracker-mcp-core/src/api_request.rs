@@ -22,6 +22,7 @@ use tracker_api::spec::{AccessLevel, HttpMethod, OperationDef, ResponseKind};
 
 use crate::error::ToolError;
 use crate::files::{FilePolicy, LOCAL_FILES_DISABLED};
+use crate::jq::add_jq_argument;
 use crate::registry::{access_flag, access_name};
 use crate::request::SAVE_TO_ARG;
 use crate::routes::{AccessDecision, default_access, required_access};
@@ -99,10 +100,11 @@ pub fn api_request_tool(max_access: AccessLevel, local_files: bool) -> Tool {
         "required": ["method", "path"],
         "additionalProperties": false
     });
-    let schema = match schema {
+    let mut schema = match schema {
         Value::Object(map) => map,
         _ => JsonObject::new(),
     };
+    add_jq_argument(&mut schema);
 
     let allowed = match max_access {
         AccessLevel::Read => {
@@ -130,7 +132,7 @@ pub fn api_request_tool(max_access: AccessLevel, local_files: bool) -> Tool {
          level; otherwise GET is read, POST/PUT/PATCH are write and DELETE is destructive. \
          {allowed} Toolsets do not restrict this tool.\n\n\
          The response is returned like other tools' responses (paging headers in \
-         `pagination`, credentials redacted)."
+         `pagination`, credentials redacted); pass `jq` to filter the JSON body."
     );
 
     let base = ToolAnnotations::with_title("Custom Tracker API request").open_world(true);

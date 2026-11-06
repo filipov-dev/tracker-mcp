@@ -59,6 +59,7 @@ async fn start(api: &MockServer, settings: Settings<'_>) -> TestServer {
             toolsets: Some(vec!["issues".into(), "users".into()]),
             local_machine: false,
             profile: None,
+            ..ServerOptions::default()
         },
         FilePolicy::new(&[dir]).unwrap(),
         token_source(),
@@ -441,6 +442,7 @@ async fn initialize_and_tools_have_no_local_machine_features() {
         toolsets: Some(vec!["issues".into(), "users".into()]),
         local_machine: true,
         profile: None,
+        ..ServerOptions::default()
     })
     .unwrap();
     let local_only: Vec<String> = local

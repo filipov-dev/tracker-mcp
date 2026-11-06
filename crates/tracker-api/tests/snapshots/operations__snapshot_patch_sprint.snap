@@ -1,0 +1,80 @@
+---
+source: crates/tracker-api/tests/operations.rs
+expression: "snapshot_view(op(\"patch_sprint\"))"
+---
+{
+  "access": "Write",
+  "body": "Json",
+  "description": "Запрос позволяет изменить параметры спринта.",
+  "docs_url": "https://yandex.ru/support/tracker/ru/api/boards/patch-sprint",
+  "input_schema": {
+    "additionalProperties": false,
+    "properties": {
+      "body": {
+        "description": "JSON request body.",
+        "properties": {
+          "endDate": {
+            "description": "Дата окончания спринта в формате: ```YYYY-MM-DD```",
+            "type": "string"
+          },
+          "name": {
+            "description": "Название спринта.",
+            "type": "string"
+          },
+          "startDate": {
+            "description": "Дата начала спринта в формате: ```YYYY-MM-DD```",
+            "type": "string"
+          },
+          "status": {
+            "description": "Статус спринта. \nВозможные статусы:- `draft` — открыт;\n- `in_progress` — в работе;\n- `released` — решен;\n- `archived` — в архиве.",
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "sprintId": {
+        "description": "Идентификатор спринта.",
+        "type": "string"
+      },
+      "version": {
+        "description": "Версия спринта. Указывается, чтобы избежать потери изменений при одновременном редактировании. Значение параметра version можно получить в ответе на запрос информации о спринте.\nСправочник передаёт версию заголовком If-Match; API принимает её и в параметре запроса version.",
+        "type": "integer"
+      }
+    },
+    "required": [
+      "sprintId",
+      "version"
+    ],
+    "type": "object"
+  },
+  "method": "PATCH",
+  "operation_id": "patchSprint",
+  "params": [
+    {
+      "description": "Идентификатор спринта.",
+      "location": "Path",
+      "name": "sprintId",
+      "required": true,
+      "value_type": "String"
+    },
+    {
+      "description": "Версия спринта. Указывается, чтобы избежать потери изменений при одновременном редактировании. Значение параметра version можно получить в ответе на запрос информации о спринте.\nСправочник передаёт версию заголовком If-Match; API принимает её и в параметре запроса version.",
+      "location": "Query",
+      "name": "version",
+      "required": true,
+      "value_type": "Integer"
+    },
+    {
+      "description": "JSON request body.",
+      "location": "Body",
+      "name": "body",
+      "required": false,
+      "value_type": "Object"
+    }
+  ],
+  "path": "/v3/sprints/{sprintId}",
+  "response": "Json",
+  "summary": "Редактировать спринт",
+  "tool_name": "patch_sprint",
+  "toolset": "boards"
+}

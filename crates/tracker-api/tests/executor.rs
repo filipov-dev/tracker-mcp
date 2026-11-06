@@ -21,6 +21,7 @@ fn config(base: &str) -> ClientConfig {
     ClientConfig {
         base_url: url::Url::parse(base).unwrap(),
         credentials: Some(Credentials::oauth(ApiToken::new(TOKEN))),
+        iam: None,
         org: Some(OrgId::Yandex360(ORG.into())),
         timeout: Duration::from_secs(5),
         max_response_bytes: 64 * 1024,

@@ -113,9 +113,10 @@ pub fn router(server: TrackerServer, options: &HttpOptions, cancel: Cancellation
         .with_json_response(true)
         .with_max_request_body_bytes(options.max_request_bytes)
         .with_cancellation_token(cancel);
-    // `TrackerServer` без состояния сессии: копия на запрос делит только неизменяемые данные.
+    // Своя сессия ядра на каждый запрос: состояние сессии (наборы инструментов) не делится
+    // между запросами и агентами; общие у копий только неизменяемые данные.
     let mcp = StreamableHttpService::new(
-        move || Ok(server.clone()),
+        move || Ok(server.new_session()),
         Arc::new(LocalSessionManager::default()),
         config,
     );

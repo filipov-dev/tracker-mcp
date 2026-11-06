@@ -30,10 +30,17 @@ enum Command {
     Auth(cli::auth::AuthCommand),
     /// Register the server in an MCP client (Claude Code or Codex) for a profile.
     ///
-    /// Sets up your Yandex OAuth application, the organization and the token of the profile,
-    /// then adds `tracker-mcp serve --profile <profile>` to the client config after
-    /// confirmation. The token never goes to the client config.
+    /// Sets up your Yandex OAuth application, the organization and the token of the profile
+    /// (or, with --iam, Yandex Cloud IAM tokens from yc), then adds
+    /// `tracker-mcp serve --profile <profile>` to the client config after confirmation. The
+    /// token never goes to the client config.
     Connect(cli::connect::ConnectArgs),
+    /// List and check custom tools defined in tools.toml.
+    #[command(subcommand)]
+    Tools(cli::tools::ToolsCommand),
+    /// Internal: run one `jq` filter for `serve` (JSON on stdin and stdout).
+    #[command(name = "jq-worker", hide = true)]
+    JqWorker,
 }
 
 #[tokio::main]
@@ -44,5 +51,7 @@ async fn main() -> anyhow::Result<()> {
         Command::Serve(args) => cli::serve::run(args).await,
         Command::Auth(command) => cli::auth::run(command).await,
         Command::Connect(args) => cli::connect::run(args).await,
+        Command::Tools(command) => cli::tools::run(command),
+        Command::JqWorker => cli::jq_worker::run(),
     }
 }

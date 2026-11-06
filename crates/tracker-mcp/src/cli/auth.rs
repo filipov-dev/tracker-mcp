@@ -1,29 +1,46 @@
 //! `tracker-mcp auth` — токены и организации профилей.
 //!
-//! Токен принимается только скрытым вводом или из stdin (`--token-stdin`), хранится только в
-//! системном хранилище и нигде не печатается. Команды, которая выводит значение токена, нет и
-//! быть не должно.
+//! OAuth: токен принимается только скрытым вводом или из stdin (`--token-stdin`), хранится
+//! только в системном хранилище и нигде не печатается. Команды, которая выводит значение
+//! токена, нет и быть не должно.
+//!
+//! IAM (`--auth iam`): токена в хранилище нет; в профиль пишутся тип, организация Yandex
+//! Cloud и настройки `yc`, а проверка получает токен через `yc` и сразу его забывает.
 
-use anyhow::Context;
+use std::path::PathBuf;
+
+use anyhow::{Context, bail};
 use clap::{Args, Subcommand};
 use tracker_api::Organization;
 use tracker_api::auth::{AuthError, KEYRING_SERVICE, KeyringStore, TokenStore};
+use tracker_api::executor::AuthScheme;
 
-use crate::login::{check_new_token, org_from_flags, resolve_org, save_token, validate_token};
+use crate::login::{
+    apply_yc_flags, check_iam, check_new_token, org_from_flags, reject_yc_flags_without_iam,
+    resolve_iam_org, resolve_org, save_token, validate_token,
+};
 use crate::oauth::{AUTHORIZE_URL, authorize_url};
-use crate::profiles::{DEFAULT_PROFILE, ProfileRepo, ProfileSettings, validate_profile_name};
+use crate::profiles::{
+    AuthKind, DEFAULT_PROFILE, ProfileRepo, ProfileSettings, check_iam_org, validate_profile_name,
+};
 use crate::ui::{TerminalUi, Ui};
 use crate::verify::{ApiVerifier, TokenVerifier};
 
 #[derive(Debug, Subcommand)]
 pub enum AuthCommand {
-    /// Store a Tracker OAuth token and the organization for a profile.
+    /// Store a Tracker OAuth token and the organization for a profile, or set the profile up
+    /// for Yandex Cloud IAM tokens (--auth iam).
     ///
-    /// The token is read from a hidden prompt (or from stdin with --token-stdin), checked
-    /// with GET /v3/myself and saved in the system keychain. It is never written to
+    /// OAuth: the token is read from a hidden prompt (or from stdin with --token-stdin),
+    /// checked with GET /v3/myself and saved in the system keychain. It is never written to
     /// profiles.toml. Replaces the stored token if there is one.
+    ///
+    /// IAM (federated and service accounts of a Yandex Cloud organization): no token is
+    /// stored. The profile gets the auth type, the Yandex Cloud organization and the yc
+    /// settings; the check gets a token with `yc iam create-token` and calls GET /v3/myself.
+    /// The server then gets IAM tokens from yc when needed and keeps them in memory only.
     Login(LoginArgs),
-    /// Show the profile, its organization and the Tracker user of the stored token.
+    /// Show the profile, its auth type, organization and the Tracker user of the token.
     ///
     /// The token value is never printed.
     Status(StatusArgs),
@@ -48,9 +65,35 @@ pub struct LoginArgs {
     /// --cloud-org-id unless the profile already has one.
     #[arg(long)]
     pub token_stdin: bool,
-    /// Store the token without checking it against the Tracker API.
+    /// Store the token without checking it against the Tracker API (with IAM: without
+    /// running yc).
     #[arg(long)]
     pub skip_check: bool,
+    /// Auth type: `oauth` (a token in the system keychain) or `iam` (a Yandex Cloud IAM token
+    /// from yc, for federated and service accounts). Default: the type saved in the
+    /// profile, otherwise oauth.
+    #[arg(long, value_enum, value_name = "TYPE")]
+    pub auth: Option<AuthKind>,
+    /// Same as --auth iam.
+    #[arg(long, conflicts_with = "auth")]
+    pub iam: bool,
+    /// IAM: absolute path to the yc CLI. Default: yc from PATH.
+    #[arg(long, value_name = "PATH")]
+    pub yc_path: Option<PathBuf>,
+    /// IAM: yc profile to get tokens with (yc --profile). Default: the active yc profile.
+    #[arg(long, value_name = "NAME")]
+    pub yc_profile: Option<String>,
+}
+
+impl LoginArgs {
+    /// Тип авторизации: флаги, иначе сохранённый в профиле.
+    fn auth_kind(&self, settings: &ProfileSettings) -> AuthKind {
+        if self.iam {
+            AuthKind::Iam
+        } else {
+            self.auth.unwrap_or(settings.auth)
+        }
+    }
 }
 
 #[derive(Debug, Clone, Args)]
@@ -115,6 +158,10 @@ pub async fn login<V: TokenVerifier>(
     let profile = args.profile.as_str();
     validate_profile_name(profile)?;
     let mut settings = repo.get(profile)?.unwrap_or_default();
+    if args.auth_kind(&settings) == AuthKind::Iam {
+        return login_iam(store, repo, verifier, ui, args, settings).await;
+    }
+    reject_yc_flags_without_iam(args.yc_path.as_deref(), args.yc_profile.as_deref())?;
 
     let from_flags = org_from_flags(args.org_id.as_deref(), args.cloud_org_id.as_deref())?;
     let cannot_ask = args.token_stdin.then(|| {
@@ -139,12 +186,62 @@ pub async fn login<V: TokenVerifier>(
     check_new_token(ui, verifier, &token, &org).await?;
     save_token(ui, store, profile, &token)?;
 
+    // Профиль, который был на IAM, переходит на OAuth: настройки yc больше не нужны.
+    settings.auth = AuthKind::Oauth;
+    settings.yc_path = None;
+    settings.yc_profile = None;
     settings.org = Some(org);
     repo.upsert(profile, settings)?;
     ui.say(&format!(
         "Profile `{profile}` saved to {}.",
         repo.path().display()
     ));
+    Ok(())
+}
+
+/// `auth login --auth iam`: тип, организация Yandex Cloud и настройки `yc` в профиль, без
+/// токена. Системное хранилище не нужно (сервисный аккаунт на сервере без Secret Service).
+async fn login_iam<V: TokenVerifier>(
+    store: &dyn TokenStore,
+    repo: &ProfileRepo,
+    verifier: Option<&V>,
+    ui: &mut dyn Ui,
+    args: &LoginArgs,
+    mut settings: ProfileSettings,
+) -> anyhow::Result<()> {
+    let profile = args.profile.as_str();
+    if args.token_stdin {
+        bail!("--token-stdin is not used with IAM tokens: tracker-mcp gets them from yc");
+    }
+    let command = apply_yc_flags(
+        &mut settings,
+        args.yc_path.as_deref(),
+        args.yc_profile.as_deref(),
+    )?;
+    let org = resolve_iam_org(
+        ui,
+        profile,
+        args.org_id.as_deref(),
+        args.cloud_org_id.as_deref(),
+        settings.org.clone(),
+    )?;
+    check_iam(ui, verifier, &command, &org).await?;
+
+    settings.auth = AuthKind::Iam;
+    settings.org = Some(org);
+    repo.upsert(profile, settings)?;
+    ui.say(&format!(
+        "Profile `{profile}` saved to {}: IAM tokens from `{}`, no token is stored.",
+        repo.path().display(),
+        command.display()
+    ));
+    // Ошибка хранилища здесь не важна: для IAM оно не нужно.
+    if matches!(store.contains(profile), Ok(true)) {
+        ui.say(&format!(
+            "An OAuth token of profile `{profile}` is still in the system keychain; it is not \
+             used with IAM. Remove it with `tracker-mcp auth logout --profile {profile}`."
+        ));
+    }
     Ok(())
 }
 
@@ -160,36 +257,23 @@ pub async fn status<V: TokenVerifier>(
     profile: &str,
 ) -> anyhow::Result<()> {
     validate_profile_name(profile)?;
-    let token = match store.get(profile) {
-        Ok(token) => Some(token),
-        Err(AuthError::NotFound { .. }) => None,
-        Err(err) => return Err(err.into()),
-    };
     let settings = repo.get(profile)?;
     let org = settings.as_ref().and_then(|settings| settings.org.clone());
+    let kind = settings.as_ref().map_or(AuthKind::Oauth, |s| s.auth);
 
     ui.say(&format!("Profile:   {profile}"));
-    ui.say(&format!(
-        "Token:     {}",
-        if token.is_some() {
-            format!("stored in the system keychain (service `{KEYRING_SERVICE}`)")
-        } else {
-            "not found".to_owned()
+    let user = match kind {
+        AuthKind::Oauth => status_oauth(store, verifier, ui, profile, org.as_ref()).await?,
+        AuthKind::Iam => {
+            let settings = settings.clone().unwrap_or_default();
+            status_iam(verifier, ui, profile, &settings, org.as_ref()).await
         }
-    ));
+    };
     ui.say(&format!(
         "Org:       {}",
         org.as_ref()
             .map_or_else(|| "not set".to_owned(), Organization::to_string)
     ));
-    let user = match (&token, &org, verifier) {
-        (Some(token), Some(org), Some(verifier)) => match verifier.current_user(token, org).await {
-            Ok(user) => user.to_string(),
-            Err(err) => format!("check failed: {err:#}"),
-        },
-        (Some(_), Some(_), None) => "not checked (--skip-check)".to_owned(),
-        _ => "-".to_owned(),
-    };
     ui.say(&format!("User:      {user}"));
     match &settings {
         Some(settings) => {
@@ -220,6 +304,78 @@ pub async fn status<V: TokenVerifier>(
     Ok(())
 }
 
+/// Строки `Auth` и `Token` профиля с OAuth; возвращает строку `User`.
+async fn status_oauth<V: TokenVerifier>(
+    store: &dyn TokenStore,
+    verifier: Option<&V>,
+    ui: &mut dyn Ui,
+    profile: &str,
+    org: Option<&Organization>,
+) -> anyhow::Result<String> {
+    let token = match store.get(profile) {
+        Ok(token) => Some(token),
+        Err(AuthError::NotFound { .. }) => None,
+        Err(err) => return Err(err.into()),
+    };
+    ui.say("Auth:      OAuth");
+    ui.say(&format!(
+        "Token:     {}",
+        if token.is_some() {
+            format!("stored in the system keychain (service `{KEYRING_SERVICE}`)")
+        } else {
+            "not found".to_owned()
+        }
+    ));
+    Ok(match (&token, org, verifier) {
+        (Some(token), Some(org), Some(verifier)) => match verifier.current_user(token, org).await {
+            Ok(user) => user.to_string(),
+            Err(err) => format!("check failed: {err:#}"),
+        },
+        (Some(_), Some(_), None) => "not checked (--skip-check)".to_owned(),
+        _ => "-".to_owned(),
+    })
+}
+
+/// Строки `Auth` и `Token` профиля с IAM; возвращает строку `User`. Системное хранилище не
+/// читается; с проверкой токен получается через `yc` и сразу забывается.
+async fn status_iam<V: TokenVerifier>(
+    verifier: Option<&V>,
+    ui: &mut dyn Ui,
+    profile: &str,
+    settings: &ProfileSettings,
+    org: Option<&Organization>,
+) -> String {
+    let command = settings.yc_command();
+    match &command {
+        Ok(command) => ui.say(&format!(
+            "Auth:      IAM (Yandex Cloud IAM token from `{}`)",
+            command.display()
+        )),
+        Err(err) => ui.say(&format!("Auth:      IAM (invalid yc settings: {err:#})")),
+    }
+    ui.say("Token:     not stored; obtained from yc when needed and kept in memory only");
+    let (Ok(command), Some(org)) = (command, org) else {
+        return "-".to_owned();
+    };
+    if let Err(err) = check_iam_org(profile, org) {
+        return format!("check failed: {err:#}");
+    }
+    let Some(verifier) = verifier else {
+        return "not checked (--skip-check)".to_owned();
+    };
+    let issued = match command.run().await {
+        Ok(issued) => issued,
+        Err(err) => return format!("check failed: {err}"),
+    };
+    match verifier
+        .current_user_as(AuthScheme::Iam, &issued.token, org)
+        .await
+    {
+        Ok(user) => user.to_string(),
+        Err(err) => format!("check failed: {err:#}"),
+    }
+}
+
 pub fn logout(
     store: &dyn TokenStore,
     repo: &ProfileRepo,
@@ -228,6 +384,9 @@ pub fn logout(
     forget: bool,
 ) -> anyhow::Result<()> {
     validate_profile_name(profile)?;
+    let iam = repo
+        .get(profile)?
+        .is_some_and(|settings| settings.auth == AuthKind::Iam);
     match store.delete(profile) {
         Ok(()) => ui.say(&format!(
             "Token of profile `{profile}` removed from the system keychain. If it is no longer \
@@ -236,7 +395,15 @@ pub fn logout(
         Err(AuthError::NotFound { .. }) => {
             ui.say(&format!("No token stored for profile `{profile}`."));
         }
+        // Профилю с IAM хранилище не нужно: его недоступность — не ошибка.
+        Err(AuthError::Unavailable(_)) if iam => {}
         Err(err) => return Err(err.into()),
+    }
+    if iam {
+        ui.say(&format!(
+            "Profile `{profile}` uses IAM tokens from yc, which tracker-mcp never stores. To stop \
+             using it, remove the profile with --forget or the MCP server from the client."
+        ));
     }
     if forget {
         if repo.remove(profile)? {
@@ -277,6 +444,10 @@ mod tests {
             cloud_org_id: None,
             token_stdin: false,
             skip_check: false,
+            auth: None,
+            iam: false,
+            yc_path: None,
+            yc_profile: None,
         }
     }
 
@@ -551,6 +722,291 @@ mod tests {
             .unwrap();
         let text = ui.text();
         assert!(text.contains("User:      jdoe (John Doe)"), "{text}");
+        assert!(text.contains("Auth:      OAuth"), "{text}");
         assert!(!text.contains("mock-token"), "{text}");
+    }
+
+    #[cfg(unix)]
+    use crate::login::testing::FakeYc;
+
+    #[cfg(unix)]
+    fn iam_args(profile: &str, yc: &FakeYc) -> LoginArgs {
+        LoginArgs {
+            iam: true,
+            yc_path: Some(yc.path()),
+            yc_profile: Some("work".into()),
+            cloud_org_id: Some("cloud-org".into()),
+            ..args(profile)
+        }
+    }
+
+    /// `auth login --iam` с подменным `yc` и wiremock: токен не сохраняется, в профиль
+    /// пишутся тип, организация и настройки yc; `auth status` показывает тип и пользователя.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn iam_login_and_status_against_fake_yc() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path(MYSELF_PATH))
+            .and(header("authorization", "Bearer iam-token-1"))
+            .and(header("x-cloud-org-id", "cloud-org"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({"login": "fed-user"})))
+            .expect(1)
+            .mount(&server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path(MYSELF_PATH))
+            .and(header("authorization", "Bearer iam-token-2"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({"login": "fed-user"})))
+            .expect(1)
+            .mount(&server)
+            .await;
+        let api = ApiVerifier::with_base_url(server.uri());
+        let (_dir, repo, store) = setup();
+        let yc = FakeYc::new();
+
+        let mut ui = ScriptedUi::default();
+        login(&store, &repo, Some(&api), &mut ui, &iam_args("fed", &yc))
+            .await
+            .unwrap();
+        assert_eq!(yc.calls(), 1);
+        assert_eq!(
+            yc.args().trim(),
+            "iam create-token --profile work --format json"
+        );
+        let text = ui.text();
+        assert!(
+            text.contains("signed in to Tracker as `fed-user`"),
+            "{text}"
+        );
+        assert!(!text.contains("iam-token"), "{text}");
+        assert!(ui.questions.is_empty());
+        assert!(!store.contains("fed").unwrap());
+        let saved = repo.get("fed").unwrap().unwrap();
+        assert_eq!(saved.auth, AuthKind::Iam);
+        assert_eq!(saved.yc_profile.as_deref(), Some("work"));
+        assert_eq!(saved.yc_path, Some(yc.path()));
+        assert_eq!(saved.org.unwrap().header(), ("X-Cloud-Org-ID", "cloud-org"));
+        let file = std::fs::read_to_string(repo.path()).unwrap();
+        assert!(!file.contains("iam-token"), "{file}");
+
+        let mut ui = ScriptedUi::default();
+        status(&store, &repo, Some(&api), &mut ui, "fed")
+            .await
+            .unwrap();
+        let text = ui.text();
+        assert!(text.contains("Auth:      IAM"), "{text}");
+        assert!(text.contains("--profile work`"), "{text}");
+        assert!(text.contains("Token:     not stored"), "{text}");
+        assert!(text.contains("User:      fed-user"), "{text}");
+        assert!(!text.contains("iam-token"), "{text}");
+        assert_eq!(yc.calls(), 2);
+
+        // Без проверки yc не запускается.
+        let mut ui = ScriptedUi::default();
+        status::<ApiVerifier>(&store, &repo, None, &mut ui, "fed")
+            .await
+            .unwrap();
+        assert!(ui.text().contains("not checked"), "{}", ui.text());
+        assert_eq!(yc.calls(), 2);
+
+        // Повторный login без флагов остаётся на IAM (тип из профиля) и ничего не спрашивает.
+        let mut ui = ScriptedUi::default();
+        let rerun = LoginArgs {
+            skip_check: true,
+            ..args("fed")
+        };
+        login::<ApiVerifier>(&store, &repo, None, &mut ui, &rerun)
+            .await
+            .unwrap();
+        assert!(ui.questions.is_empty());
+        assert!(ui.tokens.is_empty());
+        assert_eq!(repo.get("fed").unwrap().unwrap().auth, AuthKind::Iam);
+
+        // `--auth oauth` переводит профиль обратно на OAuth и убирает настройки yc.
+        let mut ui = ScriptedUi {
+            tokens: ["good-token".to_owned()].into(),
+            ..Default::default()
+        };
+        let back = LoginArgs {
+            auth: Some(AuthKind::Oauth),
+            ..args("fed")
+        };
+        login(&store, &repo, Some(&verifier()), &mut ui, &back)
+            .await
+            .unwrap();
+        let saved = repo.get("fed").unwrap().unwrap();
+        assert_eq!(saved.auth, AuthKind::Oauth);
+        assert_eq!(saved.yc_profile, None);
+        assert_eq!(saved.yc_path, None);
+        assert_eq!(store.get("fed").unwrap().expose(), "good-token");
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn iam_login_failures_save_nothing() {
+        let (_dir, repo, store) = setup();
+        let yc = FakeYc::new();
+        let verifier = verifier();
+
+        // yc падает: ничего не сохраняется, stderr yc в ошибке замаскирован.
+        yc.fail();
+        let mut ui = ScriptedUi::default();
+        let err = login(
+            &store,
+            &repo,
+            Some(&verifier),
+            &mut ui,
+            &iam_args("fed", &yc),
+        )
+        .await
+        .unwrap_err()
+        .to_string();
+        assert!(err.contains("Nothing was saved"), "{err}");
+        assert!(err.contains("denied ***"), "{err}");
+        assert!(!err.contains("LeakedSecret"), "{err}");
+        assert_eq!(repo.get("fed").unwrap(), None);
+
+        // Tracker не принимает токен: ничего не сохраняется, значения токена в ошибке нет.
+        let yc = FakeYc::new();
+        let mut ui = ScriptedUi::default();
+        let err = login(
+            &store,
+            &repo,
+            Some(&verifier),
+            &mut ui,
+            &iam_args("fed", &yc),
+        )
+        .await
+        .unwrap_err()
+        .to_string();
+        assert!(err.contains("rejected the IAM token"), "{err}");
+        assert!(!err.contains("iam-token"), "{err}");
+        assert_eq!(repo.get("fed").unwrap(), None);
+    }
+
+    #[tokio::test]
+    async fn iam_login_requires_cloud_org() {
+        let (_dir, repo, store) = setup();
+        let iam = LoginArgs {
+            iam: true,
+            skip_check: true,
+            ..args("fed")
+        };
+        // --org-id (Yandex 360) с IAM — ошибка до запуска yc.
+        let mut ui = ScriptedUi::default();
+        let err = login::<FakeVerifier>(
+            &store,
+            &repo,
+            None,
+            &mut ui,
+            &LoginArgs {
+                org_id: Some("42".into()),
+                ..iam.clone()
+            },
+        )
+        .await
+        .unwrap_err();
+        assert!(err.to_string().contains("--cloud-org-id"), "{err}");
+
+        // Организация Yandex 360 в профиле — тоже ошибка.
+        repo.upsert(
+            "fed",
+            ProfileSettings {
+                org: Some(Organization::new(OrgKind::Yandex360, "42").unwrap()),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        let err = login::<FakeVerifier>(&store, &repo, None, &mut ui, &iam)
+            .await
+            .unwrap_err();
+        assert!(
+            err.to_string().contains("Yandex Cloud organization"),
+            "{err}"
+        );
+
+        // Без организации спрашивается только ID организации Yandex Cloud.
+        let mut ui = ScriptedUi {
+            answers: ["cloud-org".to_owned()].into(),
+            ..Default::default()
+        };
+        login::<FakeVerifier>(
+            &store,
+            &repo,
+            None,
+            &mut ui,
+            &LoginArgs {
+                profile: "fresh".into(),
+                ..iam.clone()
+            },
+        )
+        .await
+        .unwrap();
+        assert_eq!(ui.questions, ["Yandex Cloud Organization ID: "]);
+        let saved = repo.get("fresh").unwrap().unwrap();
+        assert_eq!(saved.auth, AuthKind::Iam);
+        assert_eq!(saved.org.unwrap().header(), ("X-Cloud-Org-ID", "cloud-org"));
+        assert!(ui.text().contains("--skip-check"), "{}", ui.text());
+
+        // --token-stdin и флаги yc без IAM — ошибки.
+        let err = login::<FakeVerifier>(
+            &store,
+            &repo,
+            None,
+            &mut ui,
+            &LoginArgs {
+                token_stdin: true,
+                ..iam.clone()
+            },
+        )
+        .await
+        .unwrap_err();
+        assert!(err.to_string().contains("--token-stdin"), "{err}");
+        let err = login::<FakeVerifier>(
+            &store,
+            &repo,
+            None,
+            &mut ui,
+            &LoginArgs {
+                yc_profile: Some("work".into()),
+                org_id: Some("1".into()),
+                ..args("other")
+            },
+        )
+        .await
+        .unwrap_err();
+        assert!(err.to_string().contains("--auth iam"), "{err}");
+        let err = login::<FakeVerifier>(
+            &store,
+            &repo,
+            None,
+            &mut ui,
+            &LoginArgs {
+                yc_profile: Some("--format".into()),
+                ..iam
+            },
+        )
+        .await
+        .unwrap_err();
+        assert!(err.to_string().contains("yc profile"), "{err}");
+    }
+
+    #[tokio::test]
+    async fn logout_of_iam_profile_explains_that_nothing_is_stored() {
+        let (_dir, repo, store) = setup();
+        repo.upsert(
+            "fed",
+            ProfileSettings {
+                auth: AuthKind::Iam,
+                org: Some(Organization::new(OrgKind::Cloud, "o").unwrap()),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        let mut ui = ScriptedUi::default();
+        logout(&store, &repo, &mut ui, "fed", false).unwrap();
+        assert!(ui.text().contains("uses IAM tokens"), "{}", ui.text());
+        assert!(repo.get("fed").unwrap().is_some());
     }
 }

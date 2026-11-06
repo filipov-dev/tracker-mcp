@@ -1,6 +1,6 @@
 # Подключение к MCP-клиентам
 
-Сервер работает через stdio: MCP-клиент сам запускает `tracker-mcp serve --profile <профиль>` и общается с ним через stdin и stdout. Токен и организацию сервер берёт из профиля (токен — из системного хранилища), поэтому в конфигурации клиента их нет.
+Сервер работает через stdio: MCP-клиент сам запускает `tracker-mcp serve --profile <профиль>` и общается с ним через stdin и stdout. Токен и организацию сервер берёт из профиля (токен — из системного хранилища, для федеративных и сервисных аккаунтов — IAM-токен от `yc`, см. [IAM-токены](iam.md)), поэтому в конфигурации клиента их нет.
 
 Рекомендуемая схема: **один клиент — один профиль — одно OAuth-приложение и токен**. Тогда токен любого агента можно отозвать или заменить, не трогая остальных, а права настраиваются для каждого клиента отдельно ([OAuth-приложение и токен](oauth.md)).
 
@@ -18,7 +18,7 @@ tracker-mcp connect codex
 1. Помогает создать собственное OAuth-приложение Яндекса и сохраняет его `ClientID` в профиль (только в первый раз).
 2. Спрашивает организацию: тип (Yandex 360 или Yandex Cloud) и ID.
 3. Открывает ссылку получения токена, принимает токен скрытым вводом и проверяет его запросом `GET /v3/myself`. Если рабочий токен уже сохранён, предлагает его оставить.
-4. Сохраняет токен в системное хранилище, а настройки — в профиль `~/.config/tracker-mcp/profiles.toml`.
+4. Сохраняет токен в системное хранилище, а настройки — в профиль `~/.config/tracker-mcp/profiles.toml` (в Windows — `%APPDATA%\tracker-mcp\profiles.toml`, см. [Windows](#windows)).
 5. Показывает, что изменится в конфигурации клиента, и после подтверждения регистрирует сервер `tracker`: в Claude Code — через `claude mcp add`, в Codex — таблицей `[mcp_servers.tracker]` в `~/.codex/config.toml`.
 
 После этого перезапустите клиент. Профиль по умолчанию называется как клиент (`claude-code`, `codex`), имя сервера — `tracker`. Все флаги и подробности — в [справочнике CLI](cli.md#connect).
@@ -61,7 +61,7 @@ tracker-mcp connect claude-code --toolsets issues,queues,boards,users,filters
 
    Новый профиль создаётся с доступом только на чтение. Если в профиле нет `client_id`, получите токен по ссылке вашего приложения ([получение токена](oauth.md#получение-токена)).
 
-2. Узнайте абсолютный путь к бинарнику: `command -v tracker-mcp`. Клиенты, запущенные не из терминала, часто не видят `PATH` оболочки.
+2. Узнайте абсолютный путь к бинарнику: `command -v tracker-mcp` (в Windows — `(Get-Command tracker-mcp).Source`). Клиенты, запущенные не из терминала, часто не видят `PATH` оболочки.
 
 3. Зарегистрируйте в клиенте stdio-сервер: команда — путь к `tracker-mcp`, аргументы — `serve --profile <профиль>` и нужные флаги. Формат `mcpServers`, который понимает большинство клиентов:
 
@@ -165,6 +165,23 @@ kimi mcp add --transport stdio tracker -- "$(command -v tracker-mcp)" serve --pr
 ```
 
 Импорт серверов из Claude Code и Codex на той же странице перенесёт их запись вместе с профилем: агент ZCode будет работать с токеном другого клиента. Чтобы у ZCode был свой токен, добавляйте запись вручную.
+
+## Windows
+
+`connect`, `auth` и `serve` работают в Windows так же, команды можно запускать из PowerShell, `cmd` или Git Bash. Установка — [Установка: Windows](install.md#windows).
+
+- **Токен** хранится в Windows Credential Manager: общие учётные данные `<профиль>.dev.filipov.tracker-mcp` (Панель управления → Диспетчер учётных данных → Учётные данные Windows). Настройки профилей — в `%APPDATA%\tracker-mcp\profiles.toml`. Credential Manager доступен только в сеансе, вошедшем с паролем: в SSH-сеансе со входом по ключу, в службе или задаче планировщика без сохранённого пароля Windows не даёт хранилища (ошибка «A specified logon session does not exist»). Запускайте `connect`, `auth` и MCP-клиент в обычном сеансе пользователя; для агента на другой машине есть [HTTP-режим](http.md).
+- **Claude Code**: `connect claude-code` вызывает `claude mcp add`, поэтому команда `claude` должна быть в `PATH` (подходят и `claude.exe` из установщика Claude Code, и `claude.cmd` из npm).
+- **Codex**: `connect codex` пишет в `%USERPROFILE%\.codex\config.toml` (или в `config.toml` каталога из `CODEX_HOME`).
+- В конфигурацию клиента записывается полный путь к `tracker-mcp.exe`, из которого запущен `connect`, например `C:\Users\<имя>\AppData\Local\Programs\tracker-mcp\tracker-mcp.exe`. Обновляйте бинарник заменой файла по тому же пути, тогда `connect` повторять не нужно.
+Ручная регистрация в Codex в Windows (в TOML обратные косые черты внутри одинарных кавычек не экранируются):
+
+```toml
+# %USERPROFILE%\.codex\config.toml
+[mcp_servers.tracker]
+command = 'C:\Users\<имя>\AppData\Local\Programs\tracker-mcp\tracker-mcp.exe'
+args = ["serve", "--profile", "codex"]
+```
 
 ## Рабочий каталог и локальные файлы
 

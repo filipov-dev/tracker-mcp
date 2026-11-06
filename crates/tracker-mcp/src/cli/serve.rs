@@ -1,7 +1,8 @@
 //! `tracker-mcp serve` — запуск MCP-сервера через stdio или HTTP (`--http`).
 //!
 //! stdio: stdout занят протоколом MCP, всё остальное (логи, ошибки запуска) — только в stderr.
-//! Токен и организация берутся только из профиля: токен — из системного хранилища, организация
+//! Токен и организация берутся только из профиля: OAuth-токен — из системного хранилища,
+//! IAM-токен — от `yc iam create-token` (обновляется по сроку, только в памяти), организация
 //! — из `profiles.toml`. Переменные окружения токен не задают.
 //!
 //! HTTP ([`http_server`]): профилей и хранилища нет, токен (и организация, если её не задаёт
@@ -10,11 +11,16 @@
 //!
 //! `serve --status` печатает действующие настройки (профиль, организация, уровень доступа,
 //! наборы, разрешённые каталоги) и выходит, не запуская сервер и не обращаясь к API.
+//!
+//! Пользовательские инструменты ([`crate::cli::tools`]) читаются при запуске: в stdio — файл
+//! пользователя и `--tools-file`, в HTTP — только `--tools-file`. Фильтры `jq` выполняются в
+//! дочернем процессе этого бинарника ([`crate::cli::jq_worker`]).
 
 mod http_server;
 
 use std::net::SocketAddr;
 use std::path::PathBuf;
+use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::{Context, anyhow, bail};
@@ -24,14 +30,17 @@ use rmcp::transport::stdio;
 use tracing_subscriber::EnvFilter;
 use tracker_api::auth::{KEYRING_SERVICE, KeyringStore, TokenStore};
 use tracker_api::executor::{ApiClient, ClientConfig, Credentials, OrgId};
+use tracker_api::iam::IamTokens;
 use tracker_api::{AccessLevel, OrgKind, Organization};
 use tracker_mcp_core::{
     ALL_TOOLSETS, FilePolicy, ServerOptions, ToolRegistry, TrackerServer, access_from_flags,
     access_name, normalize_toolsets,
 };
 
+use crate::cli::{jq_worker, tools};
 use crate::profiles::{
-    DEFAULT_PROFILE, ProfileRepo, ProfileSettings, load_profile_with, validate_profile_name,
+    AuthKind, DEFAULT_PROFILE, ProfileAuth, ProfileRepo, ProfileSettings, check_iam_org,
+    load_profile_with, validate_profile_name,
 };
 use crate::ui::{TerminalUi, Ui};
 
@@ -49,9 +58,30 @@ saved for the profile are used. Without any, the server is read-only and exposes
 toolsets: issues, queues, boards, users. --allow-destructive implies --allow-write. Use \
 --toolsets all for every toolset; the error for an unknown name lists the available ones.
 
+Dynamic toolsets: with --dynamic-toolsets (or the profile setting) the server starts with only \
+`api_search`, `api_request`, `list_toolsets`, `enable_toolset` and `disable_toolset`, plus the \
+toolsets given with --toolsets and the custom tools; the agent enables toolsets on demand and \
+the client is notified that the tool list changed. Use it with clients that load all tool \
+descriptions up front and reload the list on `notifications/tools/list_changed`. Not available \
+in HTTP mode, which keeps no sessions.
+
+Response filter: every API tool and `api_request` accept an optional `jq` argument (jaq \
+dialect) applied to the JSON response after credentials are redacted; --max-response-bytes then \
+limits the filtered result. Filters run in a child process without environment, files or \
+network, with a timeout.
+
+Custom tools: tools defined in tools.toml next to profiles.toml (~/.config/tracker-mcp/tools.toml) \
+are registered when the file exists; files from other places (for example, a project \
+repository) only with --tools-file. A custom tool calls one API operation with fixed arguments \
+and an optional `jq` filter, and has the access level of that operation. Check the files with \
+`tracker-mcp tools check`.
+
 Token and organization: read only from the profile (the token from the system keychain, the \
 organization from profiles.toml); store them with `tracker-mcp auth login`. The token is never \
-read from environment variables or command-line arguments.
+read from environment variables or command-line arguments. A profile with IAM tokens \
+(`tracker-mcp auth login --auth iam`) stores no token: the server gets a Yandex Cloud IAM token \
+with `yc iam create-token` when needed, renews it at least hourly and before it expires, keeps \
+it in memory only, and after HTTP 401 retries the request once with a new token.
 
 Local files: file arguments of tools (uploads, `save_to` for downloads) must be inside the \
 server's working directory (unless it is the filesystem root or the home directory), the system \
@@ -83,9 +113,18 @@ pub struct ServeArgs {
     /// Register tools that delete data (implies --allow-write).
     #[arg(long)]
     pub allow_destructive: bool,
-    /// Comma-separated toolsets to enable, or `all`.
+    /// Comma-separated toolsets to enable, or `all`. With --dynamic-toolsets: the toolsets
+    /// enabled at start.
     #[arg(long, value_delimiter = ',', value_name = "TOOLSET,...")]
     pub toolsets: Vec<String>,
+    /// Load toolsets on demand: start with only the search, request and toolset tools, and
+    /// let the agent enable toolsets with `enable_toolset`. Not available with --http.
+    #[arg(long, conflicts_with = "http")]
+    pub dynamic_toolsets: bool,
+    /// Additional custom tools file (same format as ~/.config/tracker-mcp/tools.toml).
+    /// Repeatable. In HTTP mode only these files are read.
+    #[arg(long, value_name = "PATH")]
+    pub tools_file: Vec<PathBuf>,
     /// Extra directory that tools may read files from or save files to. Repeatable.
     /// Not available with --http.
     #[arg(long, value_name = "DIR", conflicts_with = "http")]
@@ -163,6 +202,7 @@ pub async fn run(args: ServeArgs) -> anyhow::Result<()> {
         tracing::info!(
             access = ?setup.options.max_access,
             toolsets = ?setup.options.toolsets,
+            custom_tools = setup.options.custom_tools.len(),
             "настройки MCP-сервера Tracker (HTTP)"
         );
         let listen = setup.listen;
@@ -178,6 +218,8 @@ pub async fn run(args: ServeArgs) -> anyhow::Result<()> {
         profile = %setup.profile,
         access = ?setup.options.max_access,
         toolsets = ?setup.options.toolsets,
+        dynamic_toolsets = setup.options.dynamic_toolsets,
+        custom_tools = setup.options.custom_tools.len(),
         roots = %setup.files.describe_roots(),
         "запуск MCP-сервера Tracker"
     );
@@ -228,12 +270,16 @@ impl Setup {
         let profile_name = args.profile();
         let profile = load_profile_with(repo, store, profile_name)
             .with_context(|| format!("cannot load profile `{profile_name}`"))?;
-        let options = effective_options(args, &profile.settings)?;
-        let mut config = ClientConfig::new(
-            Some(Credentials::oauth(profile.token)),
-            Some(OrgId::from(&profile.org)),
-        )
-        .map_err(|err| anyhow!("cannot configure the Tracker API client: {err}"))?;
+        let mut options = effective_options(args, &profile.settings)?;
+        options.custom_tools = tools::load(Some(&tools::user_tools_file(repo)), &args.tools_file)?;
+        options.jq = jq_worker::current_runner();
+        let (credentials, iam) = match profile.auth {
+            ProfileAuth::OAuth(token) => (Some(Credentials::oauth(token)), None),
+            ProfileAuth::Iam(command) => (None, Some(Arc::new(IamTokens::new(command)))),
+        };
+        let mut config = ClientConfig::new(credentials, Some(OrgId::from(&profile.org)))
+            .map_err(|err| anyhow!("cannot configure the Tracker API client: {err}"))?;
+        config.iam = iam;
         config.timeout = Duration::from_secs(args.timeout);
         config.max_response_bytes = args.max_response_bytes;
         Ok(Self {
@@ -271,6 +317,15 @@ impl HttpSetup {
             // Сервер не на машине агента: файловых инструментов нет, инструкции — для HTTP.
             local_machine: false,
             profile: None,
+            // Только явные файлы: HTTP-режим собирается из флагов, без каталога конфигурации.
+            // Это файлы оператора сервера, а не агента.
+            custom_tools: tools::load(None, &args.tools_file)?,
+            // Фильтры `jq` и здесь выполняются в отдельном процессе: это защита сервера от
+            // зависших фильтров, а не доступ к файлам.
+            jq: jq_worker::current_runner(),
+            // HTTP без сессий: включённые наборы негде хранить между запросами (флаг
+            // `--dynamic-toolsets` с `--http` отклоняет clap).
+            ..ServerOptions::default()
         };
         let org = match (&args.org_id, &args.cloud_org_id) {
             (Some(id), _) => Some(server_org(OrgKind::Yandex360, id, "--org-id")?),
@@ -388,8 +443,12 @@ fn effective_options(
     Ok(ServerOptions {
         max_access,
         toolsets,
+        // Как и флаги доступа: флаг командной строки включает, без него — настройка профиля.
+        dynamic_toolsets: args.dynamic_toolsets || settings.dynamic_toolsets,
         local_machine: true,
         profile: Some(args.profile().to_owned()),
+        // Пользовательские инструменты и исполнитель `jq` заполняет `Setup::load`.
+        ..ServerOptions::default()
     })
 }
 
@@ -404,27 +463,63 @@ pub fn status(
     args.validate()?;
     let profile = args.profile();
     let settings = repo.get(profile)?.unwrap_or_default();
-    let has_token = store.contains(profile)?;
+    let iam = settings.auth == AuthKind::Iam;
+    // Профилю с IAM хранилище не нужно: на сервере без Secret Service статус тоже работает.
+    let has_token = if iam { false } else { store.contains(profile)? };
     let (access, access_source) = effective_access(args, &settings);
     let (toolsets, toolsets_source) = effective_toolsets(args, &settings)?;
+    let tools_file = tools::user_tools_file(repo);
     let options = ServerOptions {
         max_access: access,
         toolsets,
+        dynamic_toolsets: args.dynamic_toolsets || settings.dynamic_toolsets,
+        custom_tools: tools::load(Some(&tools_file), &args.tools_file)?,
         local_machine: true,
         profile: Some(profile.to_owned()),
+        ..ServerOptions::default()
     };
     let registry = ToolRegistry::new(&options).map_err(|err| anyhow!(err))?;
     let files = FilePolicy::with_defaults(&args.allow_path).map_err(|err| anyhow!(err))?;
 
     ui.say(&format!("Profile:   {profile}"));
-    ui.say(&format!(
-        "Token:     {}",
-        if has_token {
-            format!("stored in the system keychain (service `{KEYRING_SERVICE}`)")
-        } else {
-            format!("not found; store it with `tracker-mcp auth login --profile {profile}`")
+    // Готов ли источник токена: OAuth — токен в хранилище, IAM — корректные настройки yc и
+    // организация Yandex Cloud.
+    let auth_ready = if iam {
+        let command = settings.yc_command();
+        match &command {
+            Ok(command) => ui.say(&format!(
+                "Auth:      IAM (Yandex Cloud IAM token from `{}`)",
+                command.display()
+            )),
+            Err(err) => ui.say(&format!("Auth:      IAM (invalid yc settings: {err:#})")),
         }
-    ));
+        ui.say(
+            "Token:     not stored; obtained from yc when needed, renewed at least hourly, kept \
+             in memory only",
+        );
+        let org_ok = match &settings.org {
+            Some(org) => match check_iam_org(profile, org) {
+                Ok(()) => true,
+                Err(err) => {
+                    ui.say(&format!("Problem:   {err:#}"));
+                    false
+                }
+            },
+            None => false,
+        };
+        command.is_ok() && org_ok
+    } else {
+        ui.say("Auth:      OAuth");
+        ui.say(&format!(
+            "Token:     {}",
+            if has_token {
+                format!("stored in the system keychain (service `{KEYRING_SERVICE}`)")
+            } else {
+                format!("not found; store it with `tracker-mcp auth login --profile {profile}`")
+            }
+        ));
+        has_token
+    };
     ui.say(&format!(
         "Org:       {}",
         settings.org.as_ref().map_or_else(
@@ -441,6 +536,8 @@ pub fn status(
     let toolsets_text = if registry.enabled_toolsets().len() == tracker_api::spec::toolsets().len()
     {
         ALL_TOOLSETS.to_owned()
+    } else if registry.enabled_toolsets().is_empty() {
+        "none".to_owned()
     } else {
         registry.enabled_toolsets().join(",")
     };
@@ -448,11 +545,39 @@ pub fn status(
         "Toolsets:  {toolsets_text} ({})",
         toolsets_source.label()
     ));
+    // В динамическом режиме это наборы при запуске (без выбора — ни одного), остальные
+    // агент включает сам.
+    let dynamic = match (args.dynamic_toolsets, settings.dynamic_toolsets) {
+        (true, _) => format!("on ({})", Source::Flags.label()),
+        (false, true) => format!("on ({})", Source::Profile.label()),
+        (false, false) => "off".to_owned(),
+    };
+    ui.say(&format!("Dynamic:   {dynamic}"));
     ui.say(&format!("Tools:     {}", registry.len()));
+    let custom_registered = options
+        .custom_tools
+        .iter()
+        .filter(|tool| registry.get(&tool.name).is_some())
+        .count();
+    ui.say(&format!(
+        "Custom:    {} defined, {custom_registered} registered (user file: {}{})",
+        options.custom_tools.len(),
+        tools_file.display(),
+        if tools_file.exists() {
+            ""
+        } else {
+            ", not found"
+        }
+    ));
     ui.say(&format!("Files:     {}", files.describe_roots()));
     ui.say(&format!("Profiles:  {}", repo.path().display()));
-    if !has_token || settings.org.is_none() {
-        ui.say("The server cannot start until the profile has a token and an organization.");
+    if !auth_ready || settings.org.is_none() {
+        ui.say(if iam {
+            "The server cannot start until the profile has valid yc settings and a Yandex Cloud \
+             organization."
+        } else {
+            "The server cannot start until the profile has a token and an organization."
+        });
     }
     Ok(())
 }
@@ -797,6 +922,156 @@ mod tests {
         assert!(Setup::load(&parse(&["--profile", "a b"]), &store, &repo).is_err());
     }
 
+    const TOOLS_TOML: &str = r#"
+[[tools]]
+name = "my_open_issues"
+description = "Open issues assigned to me"
+operation = "search_issues"
+jq = ".[] | {key, summary}"
+
+[tools.args]
+body = { query = "Assignee: me()" }
+
+[[tools]]
+name = "comment_test_1"
+description = "Comment on TEST-1"
+operation = "issues_add_comment"
+args = { issueId = "TEST-1" }
+"#;
+
+    #[test]
+    fn dynamic_toolsets_from_flag_or_profile() {
+        assert!(!options(&[], &ProfileSettings::default()).dynamic_toolsets);
+        assert!(options(&["--dynamic-toolsets"], &ProfileSettings::default()).dynamic_toolsets);
+        let saved = ProfileSettings {
+            dynamic_toolsets: true,
+            ..settings(false, false, &["boards"])
+        };
+        let opts = options(&[], &saved);
+        assert!(opts.dynamic_toolsets);
+        assert_eq!(opts.toolsets, Some(vec!["boards".to_owned()]));
+
+        // HTTP без сессий: включённые наборы негде хранить.
+        let err = try_parse(&["--http", "--dynamic-toolsets"]).unwrap_err();
+        assert_eq!(
+            err.kind(),
+            clap::error::ErrorKind::ArgumentConflict,
+            "{err}"
+        );
+
+        let (_dir, repo, store) = fixture(Some(saved), true);
+        let text = status_text(&["--profile", "ci"], &repo, &store);
+        assert!(text.contains("Dynamic:   on (from the profile)"), "{text}");
+        let (_dir, repo, store) = fixture(Some(settings(false, false, &[])), true);
+        let text = status_text(&["--profile", "ci"], &repo, &store);
+        assert!(text.contains("Dynamic:   off"), "{text}");
+        let text = status_text(&["--profile", "ci", "--dynamic-toolsets"], &repo, &store);
+        assert!(
+            text.contains("Dynamic:   on (from command-line flags)"),
+            "{text}"
+        );
+        assert!(text.contains("Toolsets:  none"), "{text}");
+    }
+
+    #[test]
+    fn status_counts_custom_tools() {
+        let (dir, repo, store) = fixture(Some(settings(false, false, &[])), true);
+        let text = status_text(&["--profile", "ci"], &repo, &store);
+        assert!(
+            text.contains("Custom:    0 defined, 0 registered (user file: "),
+            "{text}"
+        );
+        assert!(text.contains("tools.toml, not found)"), "{text}");
+
+        std::fs::write(dir.path().join("tools.toml"), TOOLS_TOML).unwrap();
+        let text = status_text(&["--profile", "ci"], &repo, &store);
+        // Инструмент записи определён, но без --allow-write не зарегистрирован.
+        assert!(
+            text.contains("Custom:    2 defined, 1 registered"),
+            "{text}"
+        );
+        let text = status_text(&["--profile", "ci", "--allow-write"], &repo, &store);
+        assert!(
+            text.contains("Custom:    2 defined, 2 registered"),
+            "{text}"
+        );
+    }
+
+    #[test]
+    fn http_reads_only_explicit_tools_files() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("team.toml");
+        std::fs::write(&file, TOOLS_TOML).unwrap();
+        let setup = HttpSetup::load(&parse(&["--http"])).unwrap();
+        assert!(setup.options.custom_tools.is_empty());
+        let file_arg = file.to_str().unwrap();
+        let setup = HttpSetup::load(&parse(&["--http", "--tools-file", file_arg])).unwrap();
+        let names: Vec<&str> = setup
+            .options
+            .custom_tools
+            .iter()
+            .map(|t| t.name.as_str())
+            .collect();
+        assert_eq!(names, ["my_open_issues", "comment_test_1"]);
+        let (server, _) = setup.server().unwrap();
+        assert!(server.registry().get("my_open_issues").is_some());
+        assert!(server.registry().get("comment_test_1").is_none());
+
+        let bad = dir.path().join("bad.toml");
+        std::fs::write(&bad, "[[tools]]\nname = \"x\"\n").unwrap();
+        let err = HttpSetup::load(&parse(&["--http", "--tools-file", bad.to_str().unwrap()]))
+            .err()
+            .unwrap();
+        assert!(err.to_string().contains("bad.toml"), "{err}");
+    }
+
+    /// Свой инструмент из `tools.toml` рядом с профилями появляется у агента и вызывает
+    /// операцию со своим фильтром.
+    #[tokio::test]
+    async fn serves_custom_tools_from_config_dir() {
+        let api = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/v3/issues/_search"))
+            .and(wiremock::matchers::body_json(
+                json!({"query": "Assignee: me()"}),
+            ))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!([
+                {"key": "TEST-1", "summary": "One", "description": "long"}
+            ])))
+            .expect(1)
+            .mount(&api)
+            .await;
+
+        let (dir, repo, store) = fixture(Some(settings(false, false, &[])), true);
+        std::fs::write(dir.path().join("tools.toml"), TOOLS_TOML).unwrap();
+        let mut setup = Setup::load(&parse(&["--profile", "ci"]), &store, &repo).unwrap();
+        setup.config.base_url = api.uri().parse().unwrap();
+        // В тестах текущий бинарник — тестовый, подкоманды `jq-worker` у него нет.
+        setup.options.jq = tracker_mcp_core::JqRunner::in_process();
+        let server = setup.server().unwrap();
+
+        let (server_io, client_io) = tokio::io::duplex(256 * 1024);
+        let handle = tokio::spawn(async move {
+            let running = server.serve(server_io).await.unwrap();
+            let _ = running.waiting().await;
+        });
+        let client = ().serve(client_io).await.unwrap();
+        let tools = client.list_all_tools().await.unwrap();
+        assert!(tools.iter().any(|t| t.name == "my_open_issues"));
+        assert!(!tools.iter().any(|t| t.name == "comment_test_1"));
+
+        let result = client
+            .call_tool(CallToolRequestParams::new("my_open_issues"))
+            .await
+            .unwrap();
+        assert_eq!(result.is_error, Some(false), "{result:?}");
+        let text = result.content[0].as_text().unwrap().text.clone();
+        assert_eq!(text, r#"{"key":"TEST-1","summary":"One"}"#);
+
+        client.cancel().await.unwrap();
+        handle.await.unwrap();
+    }
+
     /// Сервер из профиля целиком: initialize, tools/list и вызов через in-memory транспорт,
     /// API — wiremock.
     #[tokio::test]
@@ -849,5 +1124,87 @@ mod tests {
 
         client.cancel().await.unwrap();
         handle.await.unwrap();
+    }
+
+    fn iam_settings(yc_path: Option<PathBuf>) -> ProfileSettings {
+        ProfileSettings {
+            auth: AuthKind::Iam,
+            yc_path,
+            yc_profile: Some("work".into()),
+            org: Some(Organization::new(OrgKind::Cloud, "cloud-org").unwrap()),
+            ..ProfileSettings::default()
+        }
+    }
+
+    #[test]
+    fn status_of_iam_profile() {
+        // Токена в хранилище нет и он не нужен.
+        let (_dir, repo, store) = fixture(Some(iam_settings(None)), false);
+        let text = status_text(&["--profile", "ci"], &repo, &store);
+        assert!(
+            text.contains(
+                "Auth:      IAM (Yandex Cloud IAM token from `yc iam create-token --profile work`)"
+            ),
+            "{text}"
+        );
+        assert!(text.contains("Token:     not stored"), "{text}");
+        assert!(text.contains("X-Cloud-Org-ID"), "{text}");
+        assert!(!text.contains("cannot start"), "{text}");
+
+        // IAM с организацией Yandex 360 — сервер не запустится, статус объясняет почему.
+        let wrong = ProfileSettings {
+            org: Some(Organization::new(OrgKind::Yandex360, "1").unwrap()),
+            ..iam_settings(None)
+        };
+        let (_dir, repo, store) = fixture(Some(wrong), false);
+        let text = status_text(&["--profile", "ci"], &repo, &store);
+        assert!(text.contains("Problem:"), "{text}");
+        assert!(text.contains("cannot start"), "{text}");
+        assert!(Setup::load(&parse(&["--profile", "ci"]), &store, &repo).is_err());
+
+        let (_dir, repo, store) = fixture(Some(settings(false, false, &[])), true);
+        let text = status_text(&["--profile", "ci"], &repo, &store);
+        assert!(text.contains("Auth:      OAuth"), "{text}");
+    }
+
+    /// Профиль с IAM целиком: токен от подменного `yc`, `Authorization: Bearer`, хранилище
+    /// не используется.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn serves_tools_with_iam_tokens_from_yc() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let yc_dir = tempfile::tempdir().unwrap();
+        let yc = yc_dir.path().join("yc");
+        std::fs::write(
+            &yc,
+            "#!/bin/sh\necho '{\"iam_token\": \"serve-iam-token\", \"expires_at\": \"2999-01-01T00:00:00Z\"}'\n",
+        )
+        .unwrap();
+        std::fs::set_permissions(&yc, std::fs::Permissions::from_mode(0o755)).unwrap();
+
+        let api = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/v3/myself"))
+            .and(header("authorization", "Bearer serve-iam-token"))
+            .and(header("x-cloud-org-id", "cloud-org"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({"login": "fed"})))
+            .expect(2)
+            .mount(&api)
+            .await;
+
+        let (_dir, repo, store) = fixture(Some(iam_settings(Some(yc))), false);
+        let mut setup = Setup::load(&parse(&["--profile", "ci"]), &store, &repo).unwrap();
+        assert!(setup.config.credentials.is_none());
+        assert!(setup.config.iam.is_some());
+        setup.config.base_url = api.uri().parse().unwrap();
+        let server = setup.server().unwrap();
+        for _ in 0..2 {
+            let result = server
+                .call("get_user_info", serde_json::Map::new())
+                .await
+                .unwrap();
+            assert_eq!(result.is_error, Some(false), "{result:?}");
+        }
     }
 }

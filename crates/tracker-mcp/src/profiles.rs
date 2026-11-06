@@ -1,8 +1,9 @@
 //! Профили: настройки в `~/.config/tracker-mcp/profiles.toml`, токен — в системном хранилище
-//! под именем профиля.
+//! под именем профиля (OAuth) или от `yc iam create-token` в памяти процесса (IAM).
 //!
-//! В файле профилей нет токенов и других секретов: только организация, `ClientID`
-//! OAuth-приложения пользователя (он не секретный) и настройки доступа по умолчанию.
+//! В файле профилей нет токенов и других секретов: только тип авторизации, организация,
+//! `ClientID` OAuth-приложения пользователя (он не секретный), путь к `yc` и имя его
+//! профиля, настройки доступа по умолчанию.
 
 use std::collections::BTreeMap;
 use std::fs;
@@ -11,7 +12,8 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context, bail};
 use serde::{Deserialize, Serialize};
 use tracker_api::auth::{AuthError, KeyringStore, TokenStore};
-use tracker_api::{ApiToken, Organization};
+use tracker_api::iam::YcCommand;
+use tracker_api::{ApiToken, OrgKind, Organization};
 
 /// Переменная окружения, которая переопределяет каталог конфигурации (нужна для тестов).
 pub const CONFIG_DIR_ENV: &str = "TRACKER_MCP_CONFIG_DIR";
@@ -25,10 +27,37 @@ pub const DEFAULT_PROFILE: &str = "default";
 /// Максимальная длина имени профиля.
 const MAX_PROFILE_LEN: usize = 64;
 
+/// Тип авторизации профиля.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, clap::ValueEnum)]
+#[serde(rename_all = "lowercase")]
+pub enum AuthKind {
+    /// OAuth token from the system keychain.
+    #[default]
+    Oauth,
+    /// Yandex Cloud IAM token from `yc iam create-token`, kept in memory only.
+    Iam,
+}
+
+impl AuthKind {
+    pub fn is_oauth(&self) -> bool {
+        *self == Self::Oauth
+    }
+}
+
 /// Настройки профиля. Токена здесь нет.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct ProfileSettings {
+    /// Тип авторизации: OAuth (токен в системном хранилище) или IAM (токен от `yc`, только
+    /// в памяти; для федеративных и сервисных аккаунтов). OAuth не записывается в файл.
+    #[serde(skip_serializing_if = "AuthKind::is_oauth")]
+    pub auth: AuthKind,
+    /// IAM: абсолютный путь к `yc`; без него `yc` ищется в `PATH`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub yc_path: Option<PathBuf>,
+    /// IAM: имя профиля `yc` (`yc --profile`); без него — активный профиль `yc`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub yc_profile: Option<String>,
     /// MCP-клиент, в котором `connect` зарегистрировал профиль (`claude-code`, `codex`).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub client: Option<String>,
@@ -41,6 +70,10 @@ pub struct ProfileSettings {
     pub allow_destructive: bool,
     /// Включённые наборы инструментов (`serve --toolsets`); пустой список — набор по умолчанию.
     pub toolsets: Vec<String>,
+    /// Наборы инструментов включаются агентом по запросу (`serve --dynamic-toolsets`).
+    /// Не записывается, если выключено: файл остаётся читаемым прежними версиями.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub dynamic_toolsets: bool,
     /// Организация Tracker: тип определяет заголовок (`X-Org-ID` или `X-Cloud-Org-ID`).
     /// Таблица `[profiles.<имя>.org]` с полями `type` и `id`.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -58,6 +91,26 @@ impl ProfileSettings {
         self.allow_write = self.writes_allowed();
         self
     }
+
+    /// Команда `yc` для IAM-токена по настройкам профиля.
+    pub fn yc_command(&self) -> anyhow::Result<YcCommand> {
+        Ok(YcCommand::new(
+            self.yc_path.clone(),
+            self.yc_profile.clone(),
+        )?)
+    }
+}
+
+/// IAM-токены выдаются только для организации Yandex Cloud (`X-Cloud-Org-ID`).
+pub fn check_iam_org(profile: &str, org: &Organization) -> anyhow::Result<()> {
+    if org.kind() != OrgKind::Cloud {
+        bail!(
+            "profile `{profile}` uses IAM tokens, which work only with a Yandex Cloud \
+             organization, but its organization is {org}; set it with \
+             `tracker-mcp auth login --profile {profile} --auth iam --cloud-org-id <ID>`"
+        );
+    }
+    Ok(())
 }
 
 /// Содержимое `profiles.toml`.
@@ -171,15 +224,25 @@ pub fn validate_profile_name(name: &str) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Профиль, готовый к работе: настройки, организация и токен.
+/// Откуда профиль берёт токен.
+#[derive(Debug, Clone)]
+pub enum ProfileAuth {
+    /// OAuth-токен из системного хранилища.
+    OAuth(ApiToken),
+    /// IAM-токен от `yc`: получается при запросах и держится в памяти.
+    Iam(YcCommand),
+}
+
+/// Профиль, готовый к работе: настройки, организация и источник токена.
 #[derive(Debug, Clone)]
 pub struct Profile {
     pub settings: ProfileSettings,
     pub org: Organization,
-    pub token: ApiToken,
+    pub auth: ProfileAuth,
 }
 
-/// Загружает профиль: настройки из `profiles.toml` и токен из системного хранилища.
+/// Загружает профиль: настройки из `profiles.toml` и токен из системного хранилища (OAuth)
+/// или команду `yc` (IAM: хранилище не используется).
 ///
 /// Отсутствие токена или организации — понятная пользователю ошибка с подсказкой, как их
 /// сохранить.
@@ -197,6 +260,23 @@ pub fn load_profile_with(
 ) -> anyhow::Result<Profile> {
     validate_profile_name(name)?;
     let settings = repo.get(name)?.unwrap_or_default();
+    if settings.auth == AuthKind::Iam {
+        let Some(org) = settings.org.clone() else {
+            bail!(
+                "profile `{name}` has no Tracker organization; set it with \
+                 `tracker-mcp auth login --profile {name} --auth iam --cloud-org-id <ID>`"
+            );
+        };
+        check_iam_org(name, &org)?;
+        let command = settings
+            .yc_command()
+            .with_context(|| format!("profile `{name}` has invalid yc settings"))?;
+        return Ok(Profile {
+            settings,
+            org,
+            auth: ProfileAuth::Iam(command),
+        });
+    }
     let token = match store.get(name) {
         Ok(token) => token,
         Err(err @ AuthError::NotFound { .. }) => return Err(err.into()),
@@ -215,7 +295,7 @@ pub fn load_profile_with(
     Ok(Profile {
         settings,
         org,
-        token,
+        auth: ProfileAuth::OAuth(token),
     })
 }
 
@@ -228,11 +308,15 @@ mod tests {
 
     fn sample() -> ProfileSettings {
         ProfileSettings {
+            auth: AuthKind::Oauth,
+            yc_path: None,
+            yc_profile: None,
             client: Some("codex".into()),
             client_id: Some("0123456789abcdef".into()),
             allow_write: true,
             allow_destructive: false,
             toolsets: vec!["issues".into(), "queues".into()],
+            dynamic_toolsets: true,
             org: Some(Organization::new(OrgKind::Cloud, "test-org").unwrap()),
         }
     }
@@ -257,8 +341,13 @@ mod tests {
         assert!(text.contains("allow_write = true"), "{text}");
         assert!(text.contains("[profiles.codex.org]"), "{text}");
         assert!(text.contains("type = \"cloud\""), "{text}");
-        // Пустые необязательные поля не записываются.
+        assert!(text.contains("dynamic_toolsets = true"), "{text}");
+        // Пустые необязательные поля, OAuth по умолчанию и выключенные динамические
+        // наборы не записываются.
         assert_eq!(text.matches("client_id").count(), 1, "{text}");
+        assert_eq!(text.matches("dynamic_toolsets").count(), 1, "{text}");
+        assert!(!text.contains("auth"), "{text}");
+        assert!(!text.contains("yc_"), "{text}");
 
         assert!(repo.remove("codex").unwrap());
         assert!(!repo.remove("codex").unwrap());
@@ -279,6 +368,7 @@ mod tests {
         assert!(ci.allow_write);
         assert!(!ci.allow_destructive);
         assert!(ci.toolsets.is_empty());
+        assert!(!ci.dynamic_toolsets);
         assert_eq!(ci.client_id, None);
         let org = ci.org.unwrap();
         assert_eq!(org.header(), ("X-Org-ID", "42"));
@@ -352,12 +442,67 @@ mod tests {
         let profile = load_profile_with(&repo, &store, "codex").unwrap();
         assert_eq!(profile.settings, sample());
         assert_eq!(profile.org.header(), ("X-Cloud-Org-ID", "test-org"));
-        assert_eq!(profile.token.expose(), "t");
+        assert!(matches!(&profile.auth, ProfileAuth::OAuth(token) if token.expose() == "t"));
 
         // Токен без организации — ошибка с подсказкой.
         store.set("bare", &ApiToken::new("t2")).unwrap();
         let err = load_profile_with(&repo, &store, "bare").unwrap_err();
         assert!(err.to_string().contains("--cloud-org-id"), "{err}");
         assert!(!err.to_string().contains("t2"));
+    }
+
+    #[test]
+    fn iam_profile_needs_cloud_org_but_no_token() {
+        let dir = tempfile::tempdir().unwrap();
+        let repo = ProfileRepo::in_dir(dir.path());
+        let store = MemoryStore::new();
+        let iam = ProfileSettings {
+            auth: AuthKind::Iam,
+            yc_profile: Some("work".into()),
+            yc_path: Some(dir.path().join("yc")),
+            org: Some(Organization::new(OrgKind::Cloud, "cloud-org").unwrap()),
+            ..ProfileSettings::default()
+        };
+        repo.upsert("fed", iam.clone()).unwrap();
+        let text = fs::read_to_string(repo.path()).unwrap();
+        assert!(text.contains("auth = \"iam\""), "{text}");
+        assert!(text.contains("yc_profile = \"work\""), "{text}");
+        assert_eq!(repo.get("fed").unwrap(), Some(iam.clone()));
+
+        // Токен в хранилище не нужен и не читается.
+        let profile = load_profile_with(&repo, &store, "fed").unwrap();
+        let ProfileAuth::Iam(command) = &profile.auth else {
+            panic!("ожидался IAM: {:?}", profile.auth);
+        };
+        assert_eq!(command.profile(), Some("work"));
+        assert_eq!(command.program(), dir.path().join("yc"));
+
+        // Организация Yandex 360 с IAM — ошибка.
+        let wrong = ProfileSettings {
+            org: Some(Organization::new(OrgKind::Yandex360, "1").unwrap()),
+            ..iam.clone()
+        };
+        repo.upsert("fed", wrong).unwrap();
+        let err = load_profile_with(&repo, &store, "fed").unwrap_err();
+        assert!(err.to_string().contains("--cloud-org-id"), "{err}");
+
+        // Без организации и с неверными настройками yc — ошибки с подсказкой.
+        let no_org = ProfileSettings {
+            org: None,
+            ..iam.clone()
+        };
+        repo.upsert("fed", no_org).unwrap();
+        let err = load_profile_with(&repo, &store, "fed").unwrap_err();
+        assert!(err.to_string().contains("--auth iam"), "{err}");
+        let relative = ProfileSettings {
+            yc_path: Some(PathBuf::from("relative/yc")),
+            ..iam
+        };
+        repo.upsert("fed", relative).unwrap();
+        let err = load_profile_with(&repo, &store, "fed").unwrap_err();
+        assert!(format!("{err:#}").contains("absolute"), "{err:#}");
+
+        fs::write(repo.path(), "[profiles.x]\nauth = \"password\"\n").unwrap();
+        assert!(repo.get("x").is_err());
     }
 }

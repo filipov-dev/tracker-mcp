@@ -7,11 +7,13 @@
 //! - [`executor`] — выполнение HTTP-запросов к API.
 //! - [`path`] — проверка и сборка относительных путей API.
 //! - [`auth`] — хранение токенов в системном хранилище (Keychain и аналоги).
+//! - [`iam`] — IAM-токены Yandex Cloud через `yc iam create-token`, только в памяти.
 //! - [`org`] — организация Tracker и заголовок, в котором передаётся её ID.
 //! - [`token`] — обёртка токена, которая не попадает в логи и `Debug`.
 
 pub mod auth;
 pub mod executor;
+pub mod iam;
 pub mod org;
 pub mod path;
 pub mod spec;

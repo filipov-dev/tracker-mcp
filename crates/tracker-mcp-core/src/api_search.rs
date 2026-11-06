@@ -26,6 +26,7 @@ use rmcp::model::{JsonObject, Tool, ToolAnnotations};
 use serde_json::{Map, Value, json};
 use tracker_api::spec::{OperationDef, find, operations};
 
+use crate::dynamic_toolsets::ENABLE_TOOLSET_TOOL;
 use crate::error::ToolError;
 use crate::registry::{ToolRegistry, access_flag, access_name, uses_local_files};
 use crate::toolsets::available_toolsets;
@@ -157,9 +158,11 @@ pub fn api_search_tool() -> Tool {
         access level, toolset, required arguments, the API reference page, whether the tool is \
         registered here and, if not, which server flag enables it. Pass `tool_name` to get the \
         full input schema of one operation.\n\n\
-        If the tool is registered, call it directly. If only its toolset is disabled, call the \
-        same method and path with `api_request`, or ask the user to add the toolset. If it needs \
-        a higher access level, ask the user to restart the server with the named flag.\n\n\
+        If the tool is registered, call it directly. If only its toolset is disabled, enable it \
+        with `enable_toolset` when the server offers that tool, or call the same method and \
+        path with `api_request`, or ask the user to add the toolset. If it needs a higher \
+        access level, ask the user to restart the server with the named flag. Registered tools \
+        and `api_request` accept an optional `jq` filter to shrink the response.\n\n\
         Access: read-only (does not call the API).";
     let mut tool = Tool::new(API_SEARCH_TOOL, description, Arc::new(schema));
     tool.title = Some("Search Tracker API operations".to_owned());
@@ -465,7 +468,26 @@ fn insert_availability(entry: &mut Map<String, Value>, op: &OperationDef, regist
     if !access_ok {
         flags.push(access_flag(op.access).to_owned());
     }
-    if !registry.toolset_enabled(op.toolset) {
+    if registry.is_dynamic() {
+        // Набор агент включает сам; флаг нужен только для уровня доступа.
+        if access_ok {
+            entry.insert(
+                "enable_with".into(),
+                json!(format!(
+                    "{ENABLE_TOOLSET_TOOL} {{\"toolset\": \"{}\"}}",
+                    op.toolset
+                )),
+            );
+            entry.insert(
+                "note".into(),
+                json!(format!(
+                    "Its toolset is not enabled: call `{ENABLE_TOOLSET_TOOL}` with this toolset, \
+                     or call the same method and path with `api_request`."
+                )),
+            );
+            return;
+        }
+    } else if !registry.toolset_enabled(op.toolset) {
         flags.push(format!("--toolsets {}", op.toolset));
     }
     entry.insert("enable_with".into(), json!(flags.join(" ")));
@@ -720,6 +742,32 @@ mod tests {
             result["enable_with"],
             "--allow-destructive --toolsets boards"
         );
+    }
+
+    #[test]
+    fn dynamic_mode_suggests_enable_toolset() {
+        let dynamic = ToolRegistry::new(&ServerOptions {
+            max_access: AccessLevel::Read,
+            dynamic_toolsets: true,
+            ..ServerOptions::default()
+        })
+        .unwrap();
+        let result = run(json!({"tool_name": "get_issue"}), &dynamic).unwrap();
+        assert_eq!(result["registered"], false);
+        assert_eq!(
+            result["enable_with"],
+            r#"enable_toolset {"toolset": "issues"}"#
+        );
+        assert!(
+            result["note"]
+                .as_str()
+                .unwrap()
+                .contains("`enable_toolset`")
+        );
+
+        // Выше уровня доступа — только флаг сервера, без `--toolsets`.
+        let result = run(json!({"tool_name": "create_issue"}), &dynamic).unwrap();
+        assert_eq!(result["enable_with"], "--allow-write");
     }
 
     #[test]

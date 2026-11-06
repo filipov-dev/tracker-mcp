@@ -132,6 +132,9 @@ impl ServerSpec {
             args.push("--toolsets".to_owned());
             args.push(settings.toolsets.join(","));
         }
+        if settings.dynamic_toolsets {
+            args.push("--dynamic-toolsets".to_owned());
+        }
         Ok(Self {
             name: name.to_owned(),
             command,
@@ -151,8 +154,16 @@ impl ServerSpec {
 pub fn is_own_command(command: &str) -> bool {
     // Разделители обеих систем: конфиг мог быть записан на другой ОС.
     let file = command.rsplit(['/', '\\']).next().unwrap_or(command);
-    let stem = file.strip_suffix(".exe").unwrap_or(file);
-    stem == EXE_STEM
+    // Имя с `.exe` — путь Windows, где регистр в именах файлов не различается
+    // (`TRACKER-MCP.EXE` — тот же файл). Без `.exe` имя сравнивается точно.
+    match file.len().checked_sub(".exe".len()) {
+        Some(split)
+            if file.is_char_boundary(split) && file[split..].eq_ignore_ascii_case(".exe") =>
+        {
+            file[..split].eq_ignore_ascii_case(EXE_STEM)
+        }
+        _ => file == EXE_STEM,
+    }
 }
 
 /// Склеивает аргументы в строку для показа, экранируя их как в POSIX shell.
@@ -194,6 +205,7 @@ mod tests {
             allow_write: true,
             allow_destructive: true,
             toolsets: vec!["issues".into(), "queues".into()],
+            dynamic_toolsets: true,
             ..ProfileSettings::default()
         };
         let spec = ServerSpec::new("tracker", &exe, "ci", &settings).unwrap();
@@ -206,7 +218,8 @@ mod tests {
                 "--allow-write",
                 "--allow-destructive",
                 "--toolsets",
-                "issues,queues"
+                "issues,queues",
+                "--dynamic-toolsets"
             ]
         );
     }
@@ -249,6 +262,20 @@ mod tests {
         assert!(is_own_command("/opt/homebrew/bin/tracker-mcp"));
         assert!(is_own_command(r"C:\tools\tracker-mcp.exe"));
         assert!(is_own_command("tracker-mcp"));
+        // Пути Windows: регистр не важен, разделители `\` и `/`, путь из `%LOCALAPPDATA%`.
+        assert!(is_own_command(r"C:\Tools\TRACKER-MCP.EXE"));
+        assert!(is_own_command(
+            r"C:\Users\u\AppData\Local\Programs\tracker-mcp\tracker-mcp.exe"
+        ));
+        assert!(is_own_command("C:/tools/Tracker-Mcp.Exe"));
+        assert!(is_own_command("tracker-mcp.exe"));
+        assert!(!is_own_command(r"C:\tools\tracker-mcp-old.exe"));
+        assert!(!is_own_command(r"C:\tools\tracker-mcp.exe.bak"));
+        assert!(!is_own_command(r"C:\tracker-mcp\node.exe"));
+        // Без `.exe` имя сравнивается точно: в Unix это другой файл.
+        assert!(!is_own_command("/usr/local/bin/Tracker-MCP"));
+        assert!(!is_own_command(".exe"));
+        assert!(!is_own_command("трекер.exe"));
         assert!(!is_own_command("/usr/bin/node"));
         assert!(!is_own_command("/opt/legacy-tracker/dist/index.js"));
         assert!(!is_own_command("yandex_tracker_mcp"));

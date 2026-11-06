@@ -5,6 +5,7 @@ target
 .claude
 .plans
 .cache
+**/__pycache__
 docs
 scripts
 *.md

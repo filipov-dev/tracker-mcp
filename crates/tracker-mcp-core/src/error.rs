@@ -59,6 +59,12 @@ pub fn describe_api_error(err: &ApiError) -> String {
                 .to_owned()
         }
         ApiError::MissingToken => "no Tracker token is available for this request".to_owned(),
+        ApiError::TokenUnavailable(detail) => format!(
+            "could not get a Yandex Cloud IAM token for this request, so it was not sent. Ask \
+             the user to check the Yandex Cloud CLI: the command shown below must work in \
+             their terminal (`tracker-mcp auth status --profile <profile>` checks it). \
+             Details: {detail}"
+        ),
         ApiError::MissingOrg => "no Tracker organization is configured for this server; ask \
              the user to set it with `tracker-mcp auth login --org-id <ID>` (Yandex 360) or \
              `--cloud-org-id <ID>` (Yandex Cloud)"

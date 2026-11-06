@@ -491,3 +491,40 @@ fn snapshot_delete_filter() {
     // Операция API v2.
     snapshot!("delete_filter");
 }
+
+#[test]
+fn snapshot_patch_sprint() {
+    // Версия спринта — обязательный параметр запроса version, хотя справочник
+    // передаёт её заголовком If-Match.
+    snapshot!("patch_sprint");
+}
+
+#[test]
+fn object_versions_are_query_params() {
+    // Справочник передаёт версию заголовком If-Match (спринты, колонки), не описывает её
+    // (доска) или описывает в таблице «Ресурс» вместо параметров запроса (остальные).
+    for name in [
+        "patch_sprint",
+        "start_sprint",
+        "archive_sprint",
+        "patch_board",
+        "post_column",
+        "patch_column",
+        "delete_column",
+        "patch_workflow",
+        "patch_workflow_action",
+        "change_trigger",
+        "patch_component",
+        "patch_issue_field_value",
+    ] {
+        let version = op(name)
+            .param("version")
+            .unwrap_or_else(|| panic!("{name}: нет параметра version"));
+        assert_eq!(version.location, ParamLocation::Query, "{name}");
+    }
+    assert!(
+        op("patch_sprint")
+            .param("version")
+            .is_some_and(|p| p.required)
+    );
+}
