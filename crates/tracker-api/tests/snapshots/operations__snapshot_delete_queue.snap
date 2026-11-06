@@ -1,0 +1,39 @@
+---
+source: crates/tracker-api/tests/operations.rs
+expression: "snapshot_view(op(\"delete_queue\"))"
+---
+{
+  "access": "Destructive",
+  "body": null,
+  "description": "Запрос позволяет удалить очередь.",
+  "docs_url": "https://yandex.ru/support/tracker/ru/api/queues/delete-queue",
+  "input_schema": {
+    "additionalProperties": false,
+    "properties": {
+      "queueId": {
+        "description": "Идентификатор или ключ очереди. Ключ очереди чувствителен к регистру символов.",
+        "type": "string"
+      }
+    },
+    "required": [
+      "queueId"
+    ],
+    "type": "object"
+  },
+  "method": "DELETE",
+  "operation_id": "deleteQueue",
+  "params": [
+    {
+      "description": "Идентификатор или ключ очереди. Ключ очереди чувствителен к регистру символов.",
+      "location": "Path",
+      "name": "queueId",
+      "required": true,
+      "value_type": "String"
+    }
+  ],
+  "path": "/v3/queues/{queueId}",
+  "response": "Json",
+  "summary": "Удалить очередь с помощью запроса к API",
+  "tool_name": "delete_queue",
+  "toolset": "queues"
+}

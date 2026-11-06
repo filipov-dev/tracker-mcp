@@ -1,0 +1,61 @@
+---
+source: crates/tracker-api/tests/operations.rs
+expression: "snapshot_view(op(\"get_issue\"))"
+---
+{
+  "access": "Read",
+  "body": null,
+  "description": "Запрос позволяет получить информацию о задаче.",
+  "docs_url": "https://yandex.ru/support/tracker/ru/api/issues/get-issue",
+  "input_schema": {
+    "additionalProperties": false,
+    "properties": {
+      "expand": {
+        "description": "Дополнительные поля, которые будут включены в ответ:\n* `links` — связанные задачи;\n* `comments` — комментарии к задаче;\n* `transitions` — доступные переходы в другие статусы;\n* `attachments` — вложенные файлы.",
+        "type": "string"
+      },
+      "fields": {
+        "description": "Поля задачи, которые будут включены в ответ. Используйте этот параметр, чтобы получить только необходимые поля и уменьшить размер ответа.\nУкажите названия полей через запятую, например: `fields=status,assignee,summary`.\nЕсли параметр не указан, в ответ включены все основные поля (кроме тех, которые можно добавить с помощью параметра `expand`).",
+        "type": "string"
+      },
+      "issueId": {
+        "description": "Идентификатор или ключ текущей задачи.",
+        "type": "string"
+      }
+    },
+    "required": [
+      "issueId"
+    ],
+    "type": "object"
+  },
+  "method": "GET",
+  "operation_id": "getIssue",
+  "params": [
+    {
+      "description": "Идентификатор или ключ текущей задачи.",
+      "location": "Path",
+      "name": "issueId",
+      "required": true,
+      "value_type": "String"
+    },
+    {
+      "description": "Поля задачи, которые будут включены в ответ. Используйте этот параметр, чтобы получить только необходимые поля и уменьшить размер ответа.\nУкажите названия полей через запятую, например: `fields=status,assignee,summary`.\nЕсли параметр не указан, в ответ включены все основные поля (кроме тех, которые можно добавить с помощью параметра `expand`).",
+      "location": "Query",
+      "name": "fields",
+      "required": false,
+      "value_type": "String"
+    },
+    {
+      "description": "Дополнительные поля, которые будут включены в ответ:\n* `links` — связанные задачи;\n* `comments` — комментарии к задаче;\n* `transitions` — доступные переходы в другие статусы;\n* `attachments` — вложенные файлы.",
+      "location": "Query",
+      "name": "expand",
+      "required": false,
+      "value_type": "String"
+    }
+  ],
+  "path": "/v3/issues/{issueId}",
+  "response": "Json",
+  "summary": "Получить параметры задачи",
+  "tool_name": "get_issue",
+  "toolset": "issues"
+}

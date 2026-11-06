@@ -1,0 +1,33 @@
+# Пример запуска tracker-mcp в HTTP-режиме (docs/http.md).
+#
+#   docker compose up --build -d
+#   curl http://127.0.0.1:8766/health
+#
+# Токенов здесь нет: каждый агент передаёт свой токен Tracker в заголовке
+# Authorization (и организацию в X-Org-ID или X-Cloud-Org-ID) в конфигурации своего
+# MCP-клиента.
+services:
+  tracker-mcp:
+    build: .
+    image: tracker-mcp:local
+    # Флаги serve: уровень доступа, наборы инструментов, организация и т. п. добавляйте
+    # сюда, например --allow-write, --toolsets issues,queues или --org-id <ID>.
+    # --allowed-host tracker-mcp — для других контейнеров этой сети, которые обращаются
+    # к серверу по имени сервиса (http://tracker-mcp:8766/mcp).
+    command:
+      - serve
+      - --http
+      - --listen
+      - 0.0.0.0:8766
+      - --allowed-host
+      - tracker-mcp
+    ports:
+      # Только loopback хоста. Для доступа с других машин поставьте перед сервером
+      # reverse proxy с TLS и добавьте его имя через --allowed-host.
+      - "127.0.0.1:8766:8766"
+    environment:
+      RUST_LOG: warn
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    restart: unless-stopped

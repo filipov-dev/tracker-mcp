@@ -1,0 +1,39 @@
+---
+source: crates/tracker-api/tests/operations.rs
+expression: "snapshot_view(op(\"delete_filter\"))"
+---
+{
+  "access": "Destructive",
+  "body": null,
+  "description": "Запрос позволяет удалить фильтр задач.",
+  "docs_url": "https://yandex.ru/support/tracker/ru/api/filters/delete-filter",
+  "input_schema": {
+    "additionalProperties": false,
+    "properties": {
+      "filterId": {
+        "description": "Идентификатор фильтра.",
+        "type": "string"
+      }
+    },
+    "required": [
+      "filterId"
+    ],
+    "type": "object"
+  },
+  "method": "DELETE",
+  "operation_id": "deleteFilter",
+  "params": [
+    {
+      "description": "Идентификатор фильтра.",
+      "location": "Path",
+      "name": "filterId",
+      "required": true,
+      "value_type": "String"
+    }
+  ],
+  "path": "/v2/filters/{filterId}",
+  "response": "Json",
+  "summary": "Удалить фильтр",
+  "tool_name": "delete_filter",
+  "toolset": "filters"
+}

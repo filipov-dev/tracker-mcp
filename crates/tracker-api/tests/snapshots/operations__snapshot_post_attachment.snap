@@ -1,0 +1,62 @@
+---
+source: crates/tracker-api/tests/operations.rs
+expression: "snapshot_view(op(\"post_attachment\"))"
+---
+{
+  "access": "Write",
+  "body": "Multipart",
+  "description": "Запрос позволяет прикрепить файл к задаче. Файл появится на странице задачи на вкладке **Вложения**.",
+  "docs_url": "https://yandex.ru/support/tracker/ru/api/issues/post-attachment",
+  "input_schema": {
+    "additionalProperties": false,
+    "properties": {
+      "file": {
+        "description": "Файл. Absolute path to a local file; the server reads it and uploads its content as multipart field `file`.",
+        "type": "string"
+      },
+      "filename": {
+        "description": "Новое имя файла, с которым он будет храниться на сервере. Если параметр не указан, будет использовано собственное имя файла.",
+        "type": "string"
+      },
+      "issueId": {
+        "description": "Идентификатор или ключ задачи",
+        "type": "string"
+      }
+    },
+    "required": [
+      "issueId",
+      "file"
+    ],
+    "type": "object"
+  },
+  "method": "POST",
+  "operation_id": "postAttachment",
+  "params": [
+    {
+      "description": "Идентификатор или ключ задачи",
+      "location": "Path",
+      "name": "issueId",
+      "required": true,
+      "value_type": "String"
+    },
+    {
+      "description": "Новое имя файла, с которым он будет храниться на сервере. Если параметр не указан, будет использовано собственное имя файла.",
+      "location": "Query",
+      "name": "filename",
+      "required": false,
+      "value_type": "String"
+    },
+    {
+      "description": "Файл. Absolute path to a local file; the server reads it and uploads its content as multipart field `file`.",
+      "location": "FormData",
+      "name": "file",
+      "required": true,
+      "value_type": "File"
+    }
+  ],
+  "path": "/v3/issues/{issueId}/attachments",
+  "response": "Json",
+  "summary": "Прикрепить файл к задаче",
+  "tool_name": "post_attachment",
+  "toolset": "issues"
+}

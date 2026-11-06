@@ -1,0 +1,25 @@
+[package]
+name = "tracker-mcp-core"
+description = "Transport-agnostic MCP tools for the Yandex Tracker REST API"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+percent-encoding = "2.3.2"
+regex = "1.13.1"
+rmcp = { version = "3.8.0", default-features = false, features = ["server"] }
+serde_json = "1.0.154"
+tracing = "0.1.44"
+tracker-api = { version = "0.1.0", path = "../tracker-api" }
+
+[dev-dependencies]
+rmcp = { version = "3.8.0", default-features = false, features = ["client", "server"] }
+tempfile = "3.27.0"
+tokio = { version = "1.54.1", features = ["macros", "rt-multi-thread", "io-util"] }
+wiremock = "0.6.5"
+
+[lints]
+workspace = true

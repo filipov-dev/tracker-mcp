@@ -1,0 +1,272 @@
+---
+source: crates/tracker-api/tests/operations.rs
+expression: "snapshot_view(op(\"create_issue\"))"
+---
+{
+  "access": "Write",
+  "body": "Json",
+  "description": "Запрос позволяет создать задачу.",
+  "docs_url": "https://yandex.ru/support/tracker/ru/api/issues/create-issue",
+  "input_schema": {
+    "additionalProperties": false,
+    "properties": {
+      "body": {
+        "description": "JSON request body.",
+        "properties": {
+          "assignee": {
+            "anyOf": [
+              {
+                "properties": {
+                  "id": {
+                    "description": "Идентификатор сотрудника.",
+                    "type": "string"
+                  }
+                },
+                "type": "object"
+              },
+              {
+                "type": "string"
+              },
+              {
+                "type": "number"
+              }
+            ],
+            "description": "Идентификатор или логин исполнителя задачи.\nТип: Объект, число или строка."
+          },
+          "attachmentIds": {
+            "description": "Идентификаторы временных файлов, которые будут прикреплены к описанию задачи.",
+            "items": {},
+            "type": "array"
+          },
+          "author": {
+            "anyOf": [
+              {
+                "properties": {
+                  "id": {
+                    "description": "Идентификатор сотрудника.",
+                    "type": "string"
+                  }
+                },
+                "type": "object"
+              },
+              {
+                "type": "string"
+              },
+              {
+                "type": "number"
+              }
+            ],
+            "description": "Идентификатор или логин автора задачи.\nТип: Объект, число или строка."
+          },
+          "description": {
+            "description": "Описание задачи.",
+            "type": "string"
+          },
+          "followers": {
+            "description": "Идентификаторы или логины наблюдателей задачи.",
+            "items": {
+              "properties": {
+                "id": {
+                  "description": "Идентификатор сотрудника.",
+                  "type": "string"
+                }
+              },
+              "type": "object"
+            },
+            "type": "array"
+          },
+          "links": {
+            "description": "Связи с другими задачами.",
+            "items": {
+              "properties": {
+                "issue": {
+                  "description": "Идентификатор или ключ связываемой задачи",
+                  "type": "string"
+                },
+                "relationship": {
+                  "description": "Тип связи между задачами:\n* `relates` — простая связь;\n* `is dependent by` — текущая задача является блокером;\n* `depends on` — текущая задача зависит от связываемой;\n* `is subtask for` — текущая задача является подзадачей связываемой;\n* `is parent task for` — текущая задача является родительской для связываемой задачи;\n* `duplicates` — текущая задача дублирует связываемую;\n* `is duplicated by` — связываемая задача дублирует текущую;\n* `is epic of` — текущая задача является эпиком связываемой. Связь такого типа можно установить только для задач типа \"Эпик\".\n* `has epic` — связываемая задача является эпиком текущей. Связь такого типа можно установить только для задач типа \"Эпик\".",
+                  "type": "string"
+                }
+              },
+              "type": "object"
+            },
+            "type": "array"
+          },
+          "markupType": {
+            "description": "Тип отображаемой в тексте разметки. Если вы используете в тексте описания задачи [разметку YFM](https://yandex.ru/support/tracker/user/syntax-yfm.html), укажите значение `md`.",
+            "type": "string"
+          },
+          "parent": {
+            "anyOf": [
+              {
+                "properties": {
+                  "id": {
+                    "description": "Идентификатор родительской задачи.",
+                    "type": "string"
+                  },
+                  "key": {
+                    "description": "Ключ родительской задачи.",
+                    "type": "string"
+                  }
+                },
+                "type": "object"
+              },
+              {
+                "type": "string"
+              },
+              {
+                "type": "number"
+              }
+            ],
+            "description": "Родительская задача.\nТип: Объект или строка."
+          },
+          "priority": {
+            "anyOf": [
+              {
+                "properties": {
+                  "id": {
+                    "description": "Идентификатор приоритета.",
+                    "type": "string"
+                  },
+                  "key": {
+                    "description": "Ключ приоритета.",
+                    "type": "string"
+                  }
+                },
+                "type": "object"
+              },
+              {
+                "type": "string"
+              },
+              {
+                "type": "number"
+              }
+            ],
+            "description": "Приоритет задачи.\nТип: Может задаваться как объект, как строка (если передается ключ приоритета), как число (если передается идентификатор приоритета)."
+          },
+          "project": {
+            "description": "Блок с информацией о проектах задачи",
+            "properties": {
+              "primary": {
+                "description": "Идентификатор основного проекта задачи (поле проекта `shortId`)",
+                "type": "number"
+              },
+              "secondary": {
+                "description": "Идентификаторы дополнительных проектов задачи (поле проекта `shortId`)",
+                "items": {
+                  "type": "number"
+                },
+                "type": "array"
+              }
+            },
+            "type": "object"
+          },
+          "queue": {
+            "anyOf": [
+              {
+                "properties": {
+                  "id": {
+                    "description": "Идентификатор очереди.",
+                    "type": "string"
+                  },
+                  "key": {
+                    "description": "Ключ очереди.",
+                    "type": "string"
+                  }
+                },
+                "type": "object"
+              },
+              {
+                "type": "string"
+              },
+              {
+                "type": "number"
+              }
+            ],
+            "description": "Очередь, в которой нужно создать задачу.\nТип: Может задаваться как объект, как строка (если передается ключ очереди), как число (если передается идентификатор очереди)."
+          },
+          "sprint": {
+            "description": "Блок с информацией о спринтах.",
+            "items": {},
+            "type": "array"
+          },
+          "summary": {
+            "description": "Название задачи.",
+            "type": "string"
+          },
+          "tags": {
+            "description": "Блок с информацией о тегах.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "type": {
+            "anyOf": [
+              {
+                "properties": {
+                  "id": {
+                    "description": "Идентификатор типа задачи.",
+                    "type": "string"
+                  },
+                  "key": {
+                    "description": "Ключ типа задачи.",
+                    "type": "string"
+                  }
+                },
+                "type": "object"
+              },
+              {
+                "type": "string"
+              },
+              {
+                "type": "number"
+              }
+            ],
+            "description": "Тип задачи.\nТип: Может задаваться как объект, как строка (если передается ключ типа задачи), как число (если передается идентификатор типа задачи)."
+          },
+          "unique": {
+            "description": "Опциональное поле, значение которого должно быть уникально в пределах Трекера организации. Такое значение можно использовать, чтобы предотвратить создание дубликатов задач, например с помощью триггера. При повторной попытке создать задачу с тем же значением параметра дубликат создан не будет, а ответ будет содержать ошибку с кодом 409.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "summary",
+          "queue"
+        ],
+        "type": "object"
+      },
+      "notify": {
+        "description": "Отправить уведомление о создании задачи пользователям, у которых есть подписка на это событие. По умолчанию уведомление будет отправлено.",
+        "type": "boolean"
+      }
+    },
+    "required": [
+      "body"
+    ],
+    "type": "object"
+  },
+  "method": "POST",
+  "operation_id": "createIssue",
+  "params": [
+    {
+      "description": "Отправить уведомление о создании задачи пользователям, у которых есть подписка на это событие. По умолчанию уведомление будет отправлено.",
+      "location": "Query",
+      "name": "notify",
+      "required": false,
+      "value_type": "Boolean"
+    },
+    {
+      "description": "JSON request body.",
+      "location": "Body",
+      "name": "body",
+      "required": true,
+      "value_type": "Object"
+    }
+  ],
+  "path": "/v3/issues",
+  "response": "Json",
+  "summary": "Создать задачу",
+  "tool_name": "create_issue",
+  "toolset": "issues"
+}

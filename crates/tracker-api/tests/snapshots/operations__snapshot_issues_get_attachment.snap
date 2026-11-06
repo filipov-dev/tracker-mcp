@@ -1,0 +1,63 @@
+---
+source: crates/tracker-api/tests/operations.rs
+expression: "snapshot_view(op(\"issues_get_attachment\"))"
+---
+{
+  "access": "Read",
+  "body": null,
+  "description": "Запрос позволяет скачать прикрепленный к задаче файл.",
+  "docs_url": "https://yandex.ru/support/tracker/ru/api/issues/get-attachment",
+  "input_schema": {
+    "additionalProperties": false,
+    "properties": {
+      "fileId": {
+        "description": "Уникальный идентификатор файла",
+        "type": "string"
+      },
+      "fileName": {
+        "description": "Имя файла.",
+        "type": "string"
+      },
+      "issueId": {
+        "description": "Идентификатор или ключ задачи",
+        "type": "string"
+      }
+    },
+    "required": [
+      "issueId",
+      "fileId",
+      "fileName"
+    ],
+    "type": "object"
+  },
+  "method": "GET",
+  "operation_id": "issuesGetAttachment",
+  "params": [
+    {
+      "description": "Идентификатор или ключ задачи",
+      "location": "Path",
+      "name": "issueId",
+      "required": true,
+      "value_type": "String"
+    },
+    {
+      "description": "Уникальный идентификатор файла",
+      "location": "Path",
+      "name": "fileId",
+      "required": true,
+      "value_type": "String"
+    },
+    {
+      "description": "Имя файла.",
+      "location": "Path",
+      "name": "fileName",
+      "required": true,
+      "value_type": "String"
+    }
+  ],
+  "path": "/v3/issues/{issueId}/attachments/{fileId}/{fileName}",
+  "response": "Binary",
+  "summary": "Скачать файл",
+  "tool_name": "issues_get_attachment",
+  "toolset": "issues"
+}

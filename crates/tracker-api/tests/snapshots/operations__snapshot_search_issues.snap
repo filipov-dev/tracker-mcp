@@ -1,0 +1,172 @@
+---
+source: crates/tracker-api/tests/operations.rs
+expression: "snapshot_view(op(\"search_issues\"))"
+---
+{
+  "access": "Read",
+  "body": "Json",
+  "description": "Запрос позволяет получить список задач, удовлетворяющих заданному критерию.\n\nСм. также «Язык запросов 2.0 в API»: https://yandex.ru/support/tracker/ru/api/issues/query2\nИспользуйте язык запросов 2.0, чтобы задать условия поиска задач в параметре `query2`. MLJ (Mongo-like JSON) — формат JSON для описания фильтра QL2.\nВ отличие от параметра `query`, в `query2` передается не строка из интерфейса Трекера, а JSON-объект.\nПараметр `query2` поддерживается в методе Найти задачи в версиях API `v2` и `v3`. Рекомендуем использовать `v3`.",
+  "docs_url": "https://yandex.ru/support/tracker/ru/api/issues/search-issues",
+  "input_schema": {
+    "additionalProperties": false,
+    "properties": {
+      "body": {
+        "description": "JSON request body.",
+        "properties": {
+          "filter": {
+            "description": "Параметры фильтрации задач. В параметре можно указать название любого поля и значение, по которому будет производиться фильтрация. [Полный список полей задачи](https://tracker.yandex.ru/admin/fields)",
+            "type": "object"
+          },
+          "filterId": {
+            "description": "Идентификатор сохраненного фильтра.",
+            "type": "number"
+          },
+          "keys": {
+            "description": "Список ключей задач.",
+            "type": "string"
+          },
+          "order": {
+            "description": "Направление и поле сортировки задач (только в комбинации с параметром `filter`). \nЗначение указывается в формате `[+/-]КЛЮЧ_ПОЛЯ`. Знак `+` или `-` обозначает направление сортировки.",
+            "type": "string"
+          },
+          "query": {
+            "description": "Фильтр на [языке запросов](https://yandex.ru/support/tracker/user/query-filter.html).",
+            "type": "string"
+          },
+          "query2": {
+            "description": "Фильтр на языке запросов 2.0.",
+            "type": "object"
+          },
+          "queue": {
+            "description": "Очередь.",
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "expand": {
+        "description": "Дополнительные поля, которые будут включены в ответ:\n- `transitions` — переходы по жизненному циклу;\n- `attachments` — вложения;\n- `comments` — комментарии.",
+        "type": "string"
+      },
+      "fields": {
+        "description": "Поля задачи, которые будут включены в ответ. Можно указать несколько полей через запятую. Полный список поддерживаемых параметров можно найти на странице [https://tracker.yandex.ru/admin/fields](https://tracker.yandex.ru/admin/fields).",
+        "type": "string"
+      },
+      "id": {
+        "description": "Идентификатор страницы ответа при относительной пагинации.",
+        "type": "string"
+      },
+      "page": {
+        "description": "Номер страницы ответа при постраничном отображении.",
+        "type": "number"
+      },
+      "perPage": {
+        "description": "Количество задач на странице ответа. Значение по умолчанию — 50. При использовании параметра `queue` поддерживается только относительная пагинация. Для других параметров (`filter`, `query`, `query2`, `keys`) используется постраничное отображение.",
+        "type": "number"
+      },
+      "perScroll": {
+        "description": "Параметры отображения ответа при использовании механизма прокрутки.",
+        "maximum": 1000,
+        "minimum": 1,
+        "type": "integer"
+      },
+      "scrollId": {
+        "description": "Параметры отображения ответа при использовании механизма прокрутки.",
+        "type": "string"
+      },
+      "scrollTTLMillis": {
+        "description": "Параметры отображения ответа при использовании механизма прокрутки.",
+        "minimum": 1,
+        "type": "integer"
+      },
+      "scrollType": {
+        "description": "Параметры отображения ответа при использовании механизма прокрутки.",
+        "enum": [
+          "sorted",
+          "unsorted"
+        ],
+        "type": "string"
+      }
+    },
+    "type": "object"
+  },
+  "method": "POST",
+  "operation_id": "searchIssues",
+  "params": [
+    {
+      "description": "Поля задачи, которые будут включены в ответ. Можно указать несколько полей через запятую. Полный список поддерживаемых параметров можно найти на странице [https://tracker.yandex.ru/admin/fields](https://tracker.yandex.ru/admin/fields).",
+      "location": "Query",
+      "name": "fields",
+      "required": false,
+      "value_type": "String"
+    },
+    {
+      "description": "Дополнительные поля, которые будут включены в ответ:\n- `transitions` — переходы по жизненному циклу;\n- `attachments` — вложения;\n- `comments` — комментарии.",
+      "location": "Query",
+      "name": "expand",
+      "required": false,
+      "value_type": "String"
+    },
+    {
+      "description": "Количество задач на странице ответа. Значение по умолчанию — 50. При использовании параметра `queue` поддерживается только относительная пагинация. Для других параметров (`filter`, `query`, `query2`, `keys`) используется постраничное отображение.",
+      "location": "Query",
+      "name": "perPage",
+      "required": false,
+      "value_type": "Number"
+    },
+    {
+      "description": "Номер страницы ответа при постраничном отображении.",
+      "location": "Query",
+      "name": "page",
+      "required": false,
+      "value_type": "Number"
+    },
+    {
+      "description": "Идентификатор страницы ответа при относительной пагинации.",
+      "location": "Query",
+      "name": "id",
+      "required": false,
+      "value_type": "String"
+    },
+    {
+      "description": "Параметры отображения ответа при использовании механизма прокрутки.",
+      "location": "Query",
+      "name": "scrollType",
+      "required": false,
+      "value_type": "String"
+    },
+    {
+      "description": "Параметры отображения ответа при использовании механизма прокрутки.",
+      "location": "Query",
+      "name": "perScroll",
+      "required": false,
+      "value_type": "Integer"
+    },
+    {
+      "description": "Параметры отображения ответа при использовании механизма прокрутки.",
+      "location": "Query",
+      "name": "scrollTTLMillis",
+      "required": false,
+      "value_type": "Integer"
+    },
+    {
+      "description": "Параметры отображения ответа при использовании механизма прокрутки.",
+      "location": "Query",
+      "name": "scrollId",
+      "required": false,
+      "value_type": "String"
+    },
+    {
+      "description": "JSON request body.",
+      "location": "Body",
+      "name": "body",
+      "required": false,
+      "value_type": "Object"
+    }
+  ],
+  "path": "/v3/issues/_search",
+  "response": "Json",
+  "summary": "Найти задачи",
+  "tool_name": "search_issues",
+  "toolset": "issues"
+}
