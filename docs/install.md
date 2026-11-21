@@ -106,7 +106,7 @@ tracker-mcp --version
 Скачайте архив и `SHA256SUMS` в один каталог и выполните в PowerShell из него (тег замените на нужный):
 
 ```powershell
-$tag = 'v0.2.0'
+$tag = 'v0.3.0'
 $zip = "tracker-mcp-$tag-windows-x86_64.zip"
 
 # Контрольная сумма: значение должно совпасть со строкой архива в SHA256SUMS

@@ -621,20 +621,35 @@ pub fn server_instructions(
     registry: &ToolRegistry,
     files: &FilePolicy,
 ) -> String {
-    let access = match options.max_access {
-        AccessLevel::Read => {
+    // Локальный сервер берёт права из профиля (флаги регистрации их только сужают),
+    // HTTP-режим — из флагов `serve --http`.
+    let access = match (options.max_access, options.local_machine) {
+        (AccessLevel::Read, true) => {
+            "This server is read-only: only tools that read data are available. Tools that \
+             create or change data (issues, comments, transitions, links, worklogs) are enabled \
+             when the user allows `write` access for the server's profile, and tools that \
+             delete data with `destructive` access (the user does it with `tracker-mcp ui`, \
+             then restarts the client). If a task needs them, ask the user instead of looking \
+             for workarounds."
+        }
+        (AccessLevel::Read, false) => {
             "This server is read-only: only tools that read data are available. Tools that \
              create or change data (issues, comments, transitions, links, worklogs) are enabled \
              when the user starts the server with --allow-write, and tools that delete data \
              with --allow-destructive. If a task needs them, ask the user instead of looking \
              for workarounds."
         }
-        AccessLevel::Write => {
+        (AccessLevel::Write, true) => {
+            "This server can read, create and change data, but not delete it: deleting tools \
+             need `destructive` access for the server's profile (`tracker-mcp ui`). Confirm \
+             changes with the user when they were not explicitly requested."
+        }
+        (AccessLevel::Write, false) => {
             "This server can read, create and change data, but not delete it: deleting tools \
              need the user to start the server with --allow-destructive. Confirm changes with \
              the user when they were not explicitly requested."
         }
-        AccessLevel::Destructive => {
+        (AccessLevel::Destructive, _) => {
             "This server can read, change and delete data. Deleting is irreversible: confirm \
              with the user before calling destructive tools unless they explicitly asked for it."
         }
@@ -664,8 +679,8 @@ pub fn server_instructions(
         format!(
             "- Local files: file arguments (`file` for uploads, `save_to` for downloads) take a \
              path (absolute, or relative to the server's working directory) inside the allowed \
-             directories: {roots}. Other paths are rejected; the user can allow more with \
-             --allow-path. Downloads never overwrite existing files.\n",
+             directories: {roots}. Other paths are rejected; the user can allow more \
+             directories for the server's profile with `tracker-mcp ui`. Downloads never overwrite existing files.\n",
             roots = files.describe_roots(),
         )
     } else {
@@ -782,7 +797,8 @@ mod tests {
         let files = FilePolicy::new(&[]).unwrap();
         let read = instructions(&ServerOptions::default(), &files);
         assert!(read.contains("(read-only access)"), "{read}");
-        assert!(read.contains("--allow-write") && read.contains("--allow-destructive"));
+        assert!(read.contains("`write` access") && read.contains("`destructive` access"));
+        assert!(read.contains("tracker-mcp ui"), "{read}");
         assert!(read.contains("allowed directories: none"), "{read}");
         assert!(
             read.contains("Enabled toolsets: issues, queues, boards, users;"),
@@ -843,5 +859,7 @@ mod tests {
         }
         assert!(text.contains("HTTP mode"), "{text}");
         assert!(text.contains("`Authorization`"), "{text}");
+        assert!(text.contains("--allow-write"), "{text}");
+        assert!(!text.contains("tracker-mcp ui"), "{text}");
     }
 }

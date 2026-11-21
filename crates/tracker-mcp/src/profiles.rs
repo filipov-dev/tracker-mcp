@@ -10,6 +10,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, bail};
+use mcp_kit::ProfileAccess;
 use serde::{Deserialize, Serialize};
 use tracker_api::auth::{AuthError, KeyringStore, TokenStore};
 use tracker_api::iam::YcCommand;
@@ -64,10 +65,15 @@ pub struct ProfileSettings {
     /// `ClientID` OAuth-приложения пользователя, через которое получен токен.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub client_id: Option<String>,
-    /// Разрешены операции записи (`serve --allow-write`).
+    /// Разрешены операции записи. Права — настройка профиля: флаги `serve` их только
+    /// сужают, на macOS они действуют после одобрения владельцем ([`mcp_kit::approval`]).
     pub allow_write: bool,
-    /// Разрешены удаляющие операции (`serve --allow-destructive`).
+    /// Разрешены удаляющие операции (подразумевает запись).
     pub allow_destructive: bool,
+    /// Дополнительные каталоги для локальных файлов инструментов (`serve --allow-path`
+    /// только сужает их). Абсолютные пути.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub allow_path: Vec<PathBuf>,
     /// Включённые наборы инструментов (`serve --toolsets`); пустой список — набор по умолчанию.
     pub toolsets: Vec<String>,
     /// Наборы инструментов включаются агентом по запросу (`serve --dynamic-toolsets`).
@@ -90,6 +96,21 @@ impl ProfileSettings {
     pub fn normalized(mut self) -> Self {
         self.allow_write = self.writes_allowed();
         self
+    }
+
+    /// Права профиля: уровень доступа и каталоги. Флаги `serve` их только сужают, на macOS
+    /// они ещё и сверяются с одобренными (см. [`mcp_kit::approval`]).
+    pub fn access(&self) -> ProfileAccess {
+        ProfileAccess::new(
+            mcp_kit::AccessLevel::from_flags(self.allow_write, self.allow_destructive),
+            self.allow_path.clone(),
+        )
+    }
+
+    /// Записывает права в настройки.
+    pub fn set_access(&mut self, access: &ProfileAccess) {
+        (self.allow_write, self.allow_destructive) = access.level.to_flags();
+        self.allow_path = access.allow_path.clone();
     }
 
     /// Команда `yc` для IAM-токена по настройкам профиля.
@@ -169,6 +190,11 @@ impl ProfileRepo {
     /// Настройки профиля, если он есть в файле.
     pub fn get(&self, name: &str) -> anyhow::Result<Option<ProfileSettings>> {
         Ok(self.load()?.profiles.remove(name))
+    }
+
+    /// Все профили файла по имени.
+    pub fn list(&self) -> anyhow::Result<BTreeMap<String, ProfileSettings>> {
+        Ok(self.load()?.profiles)
     }
 
     /// Создаёт или заменяет профиль. Флаги доступа сохраняются нормализованными
@@ -315,10 +341,35 @@ mod tests {
             client_id: Some("0123456789abcdef".into()),
             allow_write: true,
             allow_destructive: false,
+            allow_path: vec![],
             toolsets: vec!["issues".into(), "queues".into()],
             dynamic_toolsets: true,
             org: Some(Organization::new(OrgKind::Cloud, "test-org").unwrap()),
         }
+    }
+
+    #[test]
+    fn access_round_trip() {
+        let dir = tempfile::tempdir().unwrap();
+        let repo = ProfileRepo::in_dir(dir.path());
+        let mut settings = sample();
+        assert_eq!(settings.access().level, mcp_kit::AccessLevel::Write);
+        let root = dir.path().join("files");
+        settings.set_access(&ProfileAccess::new(
+            mcp_kit::AccessLevel::Destructive,
+            vec![root.clone()],
+        ));
+        assert!(settings.allow_write && settings.allow_destructive);
+        repo.upsert("work", settings.clone()).unwrap();
+        let text = fs::read_to_string(repo.path()).unwrap();
+        assert!(text.contains("allow_path = ["), "{text}");
+        let loaded = repo.get("work").unwrap().unwrap();
+        assert_eq!(loaded.access().allow_path, vec![root]);
+        assert_eq!(loaded, settings);
+        settings.set_access(&ProfileAccess::read_only());
+        assert!(!settings.allow_write && !settings.allow_destructive);
+        assert!(settings.allow_path.is_empty());
+        assert_eq!(repo.list().unwrap().len(), 1);
     }
 
     #[test]

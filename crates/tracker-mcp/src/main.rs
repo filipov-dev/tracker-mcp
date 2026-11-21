@@ -11,6 +11,8 @@ mod profiles;
 mod ui;
 mod verify;
 
+use std::process::ExitCode;
+
 use clap::{Parser, Subcommand};
 
 /// MCP server and CLI for the Yandex Tracker REST API.
@@ -23,7 +25,8 @@ struct Cli {
 
 #[derive(Debug, Subcommand)]
 enum Command {
-    /// Run the MCP server over stdio, or over HTTP with --http.
+    /// Run the MCP server over stdio with the access of the profile (read-only by default), or
+    /// over HTTP with --http.
     Serve(cli::serve::ServeArgs),
     /// Manage stored tokens and Tracker organizations of profiles.
     #[command(subcommand)]
@@ -38,20 +41,29 @@ enum Command {
     /// List and check custom tools defined in tools.toml.
     #[command(subcommand)]
     Tools(cli::tools::ToolsCommand),
+    /// Call a tool of the server from the console, with the access of the profile; without
+    /// a tool, list the tools.
+    Call(cli::call::CallCommand),
+    /// Interactive view of the profiles: settings, access and its approval, registrations
+    /// in MCP clients, the token's Tracker user, and the tools.
+    Ui(cli::tui::UiArgs),
     /// Internal: run one `jq` filter for `serve` (JSON on stdin and stdout).
     #[command(name = "jq-worker", hide = true)]
     JqWorker,
 }
 
 #[tokio::main]
-async fn main() -> anyhow::Result<()> {
+async fn main() -> anyhow::Result<ExitCode> {
     // Спецификация встроена в бинарник; ссылка на неё не даёт линковщику её выбросить.
     let _ = tracker_mcp_core::tracker_api::OPENAPI_JSON.len();
     match Cli::parse().command {
-        Command::Serve(args) => cli::serve::run(args).await,
-        Command::Auth(command) => cli::auth::run(command).await,
-        Command::Connect(args) => cli::connect::run(args).await,
-        Command::Tools(command) => cli::tools::run(command),
-        Command::JqWorker => cli::jq_worker::run(),
+        Command::Serve(args) => cli::serve::run(args).await.map(|()| ExitCode::SUCCESS),
+        Command::Auth(command) => cli::auth::run(command).await.map(|()| ExitCode::SUCCESS),
+        Command::Connect(args) => cli::connect::run(args).await.map(|()| ExitCode::SUCCESS),
+        Command::Tools(command) => cli::tools::run(command).map(|()| ExitCode::SUCCESS),
+        // Код завершения `call` — 1, если инструмент вернул ошибку.
+        Command::Call(args) => cli::call::run(args).await,
+        Command::Ui(args) => cli::tui::run(args).await.map(|()| ExitCode::SUCCESS),
+        Command::JqWorker => cli::jq_worker::run().map(|()| ExitCode::SUCCESS),
     }
 }

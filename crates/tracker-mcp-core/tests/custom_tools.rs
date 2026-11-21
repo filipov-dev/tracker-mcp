@@ -208,7 +208,11 @@ async fn write_tool_needs_write_access() {
         .await
         .unwrap();
     assert_eq!(result.is_error, Some(true));
-    assert!(text(&result).contains("--allow-write"), "{}", text(&result));
+    assert!(
+        text(&result).contains("allow `write` access"),
+        "{}",
+        text(&result)
+    );
 
     let writer = server(&api, AccessLevel::Write);
     let registry = writer.registry();

@@ -24,7 +24,7 @@ use serde_json::{Map, Value, json};
 use tracker_api::spec::{AccessLevel, operations};
 
 use crate::error::ToolError;
-use crate::registry::{ToolKind, ToolRegistry, access_flag, uses_local_files};
+use crate::registry::{ToolKind, ToolRegistry, access_hint, uses_local_files};
 use crate::toolsets::{available_toolsets, normalize_toolsets};
 
 pub const LIST_TOOLSETS_TOOL: &str = "list_toolsets";
@@ -176,13 +176,14 @@ pub fn list(args: &JsonObject, registry: &ToolRegistry) -> Result<String, ToolEr
          `api_request` and custom tools are always available."
     );
     if hidden_total > 0 {
-        let flag = match registry.max_access() {
-            AccessLevel::Read => access_flag(AccessLevel::Write),
-            _ => access_flag(AccessLevel::Destructive),
+        let level = match registry.max_access() {
+            AccessLevel::Read => AccessLevel::Write,
+            _ => AccessLevel::Destructive,
         };
+        let hint = access_hint(level, registry.local_files());
         note.push_str(&format!(
             " `above_access_level` counts operations this server does not allow at its access \
-             level; only the user can allow them by restarting the server (e.g. with {flag})."
+             level; only the user can allow them: ask the user to {hint}."
         ));
     }
     out.insert("note".into(), json!(note));
@@ -375,7 +376,7 @@ mod tests {
         assert!(issues["above_access_level"].as_u64().unwrap() >= 1);
         let boards = toolsets.iter().find(|t| t["toolset"] == "boards").unwrap();
         assert_eq!(boards["enabled"], false);
-        assert!(out["note"].as_str().unwrap().contains("--allow-write"));
+        assert!(out["note"].as_str().unwrap().contains("`write` access"));
 
         let err = list(&args(json!({"x": 1})), &reg).unwrap_err();
         assert!(err.message().contains("no arguments"));
@@ -435,7 +436,7 @@ mod tests {
         assert!(reason.contains("toolset: \"issues\""), "{reason}");
         assert!(reason.contains("api_request"), "{reason}");
         let reason = reg.unavailable_reason("create_issue").unwrap();
-        assert!(reason.contains("--allow-write"), "{reason}");
+        assert!(reason.contains("`write` access"), "{reason}");
     }
 
     #[test]

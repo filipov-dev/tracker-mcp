@@ -23,7 +23,7 @@ use tracker_api::spec::{AccessLevel, HttpMethod, OperationDef, ResponseKind};
 use crate::error::ToolError;
 use crate::files::{FilePolicy, LOCAL_FILES_DISABLED};
 use crate::jq::add_jq_argument;
-use crate::registry::{access_flag, access_name};
+use crate::registry::{access_hint, access_name};
 use crate::request::SAVE_TO_ARG;
 use crate::routes::{AccessDecision, default_access, required_access};
 
@@ -106,19 +106,22 @@ pub fn api_request_tool(max_access: AccessLevel, local_files: bool) -> Tool {
     };
     add_jq_argument(&mut schema);
 
+    let destructive_hint = access_hint(AccessLevel::Destructive, local_files);
     let allowed = match max_access {
         AccessLevel::Read => {
             "This server is read-only, so only requests that read data are allowed (GET and \
-             read-only operations such as POST /v3/issues/_search); others are refused with the \
-             flag the user would need."
+             read-only operations such as POST /v3/issues/_search); others are refused with \
+             what the user would need to allow."
+                .to_owned()
         }
-        AccessLevel::Write => {
+        AccessLevel::Write => format!(
             "This server allows reading and changing data; deleting (and other destructive \
-             operations) needs --allow-destructive."
-        }
+             operations) needs `destructive` access: ask the user to {destructive_hint}."
+        ),
         AccessLevel::Destructive => {
             "This server allows reading, changing and deleting data; confirm destructive \
              requests with the user."
+                .to_owned()
         }
     };
     let description = format!(
@@ -167,7 +170,7 @@ pub fn prepare(
     // Уровень доступа проверяется раньше всего остального: в отказе не раскрываются
     // подробности о локальных файлах.
     let decision = required_access(method, &path);
-    check_access(method, &path, &decision, max_access)?;
+    check_access(method, &path, &decision, max_access, !files.is_disabled())?;
 
     if method == HttpMethod::Get && present("body") {
         return Err(ToolError::new(
@@ -233,6 +236,7 @@ fn check_access(
     path: &str,
     decision: &AccessDecision,
     max_access: AccessLevel,
+    local_machine: bool,
 ) -> Result<(), ToolError> {
     if max_access.allows(decision.required) {
         return Ok(());
@@ -251,11 +255,11 @@ fn check_access(
     };
     Err(ToolError::new(format!(
         "{} {path} needs {} access ({reason}), but the server runs with {} access. Ask the user \
-         to restart the server with {} if this change is intended",
+         to {} if this change is intended",
         method.as_str(),
         access_name(decision.required),
         access_name(max_access),
-        access_flag(decision.required),
+        access_hint(decision.required, local_machine),
     )))
 }
 
@@ -541,29 +545,41 @@ mod tests {
         assert!(message.contains("needs write access"), "{message}");
         assert!(message.contains("`create_issue`"), "{message}");
         assert!(message.contains("read-only access"), "{message}");
-        assert!(message.contains("--allow-write"), "{message}");
+        assert!(message.contains("allow `write` access"), "{message}");
+        assert!(message.contains("tracker-mcp ui"), "{message}");
 
         let message = err(json!({"method": "DELETE", "path": "/v3/queues/TEST"}), read);
         assert!(message.contains("needs destructive access"), "{message}");
         assert!(message.contains("`delete_queue`"), "{message}");
-        assert!(message.contains("--allow-destructive"), "{message}");
+        assert!(message.contains("allow `destructive` access"), "{message}");
 
         // Неизвестный путь — по методу.
         let message = err(json!({"method": "PATCH", "path": "/v3/unknown/1"}), read);
         assert!(message.contains("match no known operation"), "{message}");
-        assert!(message.contains("--allow-write"), "{message}");
+        assert!(message.contains("allow `write` access"), "{message}");
         let message = err(
             json!({"method": "DELETE", "path": "/v3/unknown/1"}),
             AccessLevel::Write,
         );
         assert!(message.contains("needs destructive access"), "{message}");
-        assert!(message.contains("--allow-destructive"), "{message}");
+        assert!(message.contains("allow `destructive` access"), "{message}");
 
         // Отказ по доступу раньше проверки файлов: путь вне корней не раскрывается.
         let message = err(
             json!({"method": "DELETE", "path": "/v3/queues/TEST", "save_to": "/etc/x"}),
             read,
         );
+        assert!(message.contains("allow `destructive` access"), "{message}");
+
+        // HTTP-режим: уровень задают флаги сервера.
+        let message = prepare(
+            &args(json!({"method": "DELETE", "path": "/v3/queues/TEST"})),
+            read,
+            &FilePolicy::disabled(),
+        )
+        .unwrap_err()
+        .message()
+        .to_owned();
         assert!(message.contains("--allow-destructive"), "{message}");
 
         // Поиск через POST — чтение.

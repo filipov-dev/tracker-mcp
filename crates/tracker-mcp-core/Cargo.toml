@@ -20,7 +20,7 @@ serde_json = "1.0.154"
 # Процесс фильтра `jq`, таймауты и уведомления о смене списка инструментов.
 tokio = { version = "1.54.1", features = ["process", "io-util", "time", "sync", "macros"] }
 tracing = "0.1.44"
-tracker-api = { version = "0.2.0", path = "../tracker-api" }
+tracker-api = { version = "0.3.0", path = "../tracker-api" }
 
 [dev-dependencies]
 rmcp = { version = "3.8.0", default-features = false, features = ["client", "server"] }

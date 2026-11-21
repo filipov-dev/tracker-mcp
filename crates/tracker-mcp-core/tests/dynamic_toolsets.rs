@@ -440,13 +440,17 @@ async fn custom_tools_are_registered_from_start() {
     expected.push("test_1".to_owned());
     expected.sort();
     assert_eq!(names(&server), expected);
-    // Выше уровня доступа — не зарегистрирован, вызов объясняет, какой флаг нужен.
+    // Выше уровня доступа — не зарегистрирован, вызов объясняет, какое право нужно.
     let result = server
         .call("comment_test_1", args(json!({"body": {"text": "x"}})))
         .await
         .unwrap();
     assert_eq!(result.is_error, Some(true));
-    assert!(text(&result).contains("--allow-write"), "{}", text(&result));
+    assert!(
+        text(&result).contains("allow `write` access"),
+        "{}",
+        text(&result)
+    );
 
     for tool in ["enable_toolset", "disable_toolset"] {
         let result = server

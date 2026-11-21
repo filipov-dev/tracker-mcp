@@ -130,8 +130,8 @@ fn render(tools: &[CustomTool], default: &Path) -> String {
         ));
     }
     out.push_str(
-        "\nTools above the server's access level (--allow-write, --allow-destructive) are not \
-         registered.\n",
+        "\nTools above the server's access level (the access of the profile, set with \
+         `tracker-mcp ui`) are not registered.\n",
     );
     out
 }

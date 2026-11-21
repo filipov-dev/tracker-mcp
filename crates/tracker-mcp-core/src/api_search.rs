@@ -28,7 +28,7 @@ use tracker_api::spec::{OperationDef, find, operations};
 
 use crate::dynamic_toolsets::ENABLE_TOOLSET_TOOL;
 use crate::error::ToolError;
-use crate::registry::{ToolRegistry, access_flag, access_name, uses_local_files};
+use crate::registry::{ToolRegistry, access_name, access_requirement, uses_local_files};
 use crate::toolsets::available_toolsets;
 
 /// Имя инструмента.
@@ -156,12 +156,12 @@ pub fn api_search_tool() -> Tool {
     let description = "Search all Yandex Tracker API operations, including those whose tools \
         are not enabled on this server. Each result shows the tool name, HTTP method and path, \
         access level, toolset, required arguments, the API reference page, whether the tool is \
-        registered here and, if not, which server flag enables it. Pass `tool_name` to get the \
+        registered here and, if not, what enables it (`enable_with`). Pass `tool_name` to get the \
         full input schema of one operation.\n\n\
         If the tool is registered, call it directly. If only its toolset is disabled, enable it \
         with `enable_toolset` when the server offers that tool, or call the same method and \
         path with `api_request`, or ask the user to add the toolset. If it needs a higher \
-        access level, ask the user to restart the server with the named flag. Registered tools \
+        access level, ask the user to allow it as `enable_with` and `note` say. Registered tools \
         and `api_request` accept an optional `jq` filter to shrink the response.\n\n\
         Access: read-only (does not call the API).";
     let mut tool = Tool::new(API_SEARCH_TOOL, description, Arc::new(schema));
@@ -449,7 +449,9 @@ fn describe(name: &str, registry: &ToolRegistry) -> Result<String, ToolError> {
     Ok(Value::Object(entry).to_string())
 }
 
-/// `registered`, а для незарегистрированных — флаги (`enable_with`) и что делать (`note`).
+/// `registered`, а для незарегистрированных — что их включает (`enable_with`) и что делать
+/// (`note`). Уровень доступа локального сервера — право профиля (`tracker-mcp ui`), в
+/// HTTP-режиме — флаг `serve --http`; наборы — всегда `--toolsets`.
 fn insert_availability(entry: &mut Map<String, Value>, op: &OperationDef, registry: &ToolRegistry) {
     let registered = registry.get(op.tool_name).is_some();
     entry.insert("registered".into(), json!(registered));
@@ -466,7 +468,7 @@ fn insert_availability(entry: &mut Map<String, Value>, op: &OperationDef, regist
     let mut flags = Vec::new();
     let access_ok = registry.max_access().allows(op.access);
     if !access_ok {
-        flags.push(access_flag(op.access).to_owned());
+        flags.push(access_requirement(op.access, registry.local_files()));
     }
     if registry.is_dynamic() {
         // Набор агент включает сам; флаг нужен только для уровня доступа.
@@ -490,10 +492,15 @@ fn insert_availability(entry: &mut Map<String, Value>, op: &OperationDef, regist
     } else if !registry.toolset_enabled(op.toolset) {
         flags.push(format!("--toolsets {}", op.toolset));
     }
-    entry.insert("enable_with".into(), json!(flags.join(" ")));
+    let separator = if registry.local_files() { ", " } else { " " };
+    entry.insert("enable_with".into(), json!(flags.join(separator)));
     let note = if access_ok {
         "Its toolset is not enabled: call the same method and path with `api_request`, or ask \
          the user to add the toolset to --toolsets."
+    } else if registry.local_files() {
+        "Needs a higher access level than this server allows: ask the user to allow the access \
+         in `enable_with` for the server's profile with `tracker-mcp ui` and restart the MCP \
+         client, if the change is intended."
     } else {
         "Needs a higher access level than this server allows: ask the user to restart the server \
          with the flag in `enable_with` if the change is intended."
@@ -700,7 +707,10 @@ mod tests {
         assert_eq!(new["access"], "write");
         assert_eq!(new["toolset"], "issues");
         assert_eq!(new["registered"], false);
-        assert_eq!(new["enable_with"], "--allow-write");
+        assert_eq!(
+            new["enable_with"],
+            "`write` access for the server's profile (`tracker-mcp ui`)"
+        );
         assert!(new["reference"].as_str().unwrap().starts_with("https://"));
         assert!(
             new["required_params"]
@@ -712,7 +722,10 @@ mod tests {
             .iter()
             .find(|r| r["tool_name"] == "delete_worklog")
             .unwrap();
-        assert_eq!(delete["enable_with"], "--allow-destructive");
+        assert_eq!(
+            delete["enable_with"],
+            "`destructive` access for the server's profile (`tracker-mcp ui`)"
+        );
         let list = entries
             .iter()
             .find(|r| r["tool_name"] == "issue_worklog")
@@ -740,7 +753,7 @@ mod tests {
         let result = run(json!({"tool_name": "delete_board"}), &gaps).unwrap();
         assert_eq!(
             result["enable_with"],
-            "--allow-destructive --toolsets boards"
+            "`destructive` access for the server's profile (`tracker-mcp ui`), --toolsets boards"
         );
     }
 
@@ -767,7 +780,10 @@ mod tests {
 
         // Выше уровня доступа — только флаг сервера, без `--toolsets`.
         let result = run(json!({"tool_name": "create_issue"}), &dynamic).unwrap();
-        assert_eq!(result["enable_with"], "--allow-write");
+        assert_eq!(
+            result["enable_with"],
+            "`write` access for the server's profile (`tracker-mcp ui`)"
+        );
     }
 
     #[test]
@@ -782,6 +798,28 @@ mod tests {
         let result = run(json!({"tool_name": "post_attachment"}), &remote).unwrap();
         assert_eq!(result["registered"], false);
         assert!(result["note"].as_str().unwrap().contains("HTTP mode"));
+    }
+
+    #[test]
+    fn remote_server_names_the_server_flags() {
+        let remote = ToolRegistry::new(&ServerOptions {
+            max_access: AccessLevel::Read,
+            toolsets: Some(vec!["gaps".into()]),
+            local_machine: false,
+            ..ServerOptions::default()
+        })
+        .unwrap();
+        let result = run(json!({"tool_name": "delete_board"}), &remote).unwrap();
+        assert_eq!(
+            result["enable_with"],
+            "--allow-destructive --toolsets boards"
+        );
+        assert!(
+            result["note"]
+                .as_str()
+                .unwrap()
+                .contains("restart the server")
+        );
     }
 
     #[test]
@@ -849,7 +887,10 @@ mod tests {
         assert_eq!(result["operation_id"], "createIssue");
         assert_eq!(result["method"], "POST");
         assert_eq!(result["registered"], false);
-        assert_eq!(result["enable_with"], "--allow-write");
+        assert_eq!(
+            result["enable_with"],
+            "`write` access for the server's profile (`tracker-mcp ui`)"
+        );
         assert_eq!(result["input_schema"]["type"], "object");
         assert!(result["input_schema"]["properties"]["body"].is_object());
 

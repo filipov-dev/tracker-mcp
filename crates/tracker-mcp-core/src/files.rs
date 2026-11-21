@@ -8,7 +8,7 @@
 //! - рабочий каталог процесса сервера (stdio-клиенты запускают сервер в каталоге проекта),
 //!   если это не корень файловой системы и не домашний каталог — они слишком широкие;
 //! - системный временный каталог;
-//! - каталоги из `--allow-path`.
+//! - каталоги `allow_path` профиля (флаг `--allow-path` их только сужает).
 //!
 //! Временный каталог разрешён, чтобы работали подготовленные там файлы и скачивание во
 //! временные файлы; он общий для всех программ пользователя, поэтому это отмечено в `--help`
@@ -64,7 +64,7 @@ pub const LOCAL_FILES_DISABLED: &str = "local files are not available: this serv
 impl FilePolicy {
     /// Политика с корнями по умолчанию (рабочий каталог и временный каталог) и `extra`.
     ///
-    /// Каталоги из `extra` должны существовать: опечатка в `--allow-path` — ошибка запуска.
+    /// Каталоги из `extra` должны существовать: опечатка в `allow_path` профиля — ошибка запуска.
     /// Недоступные корни по умолчанию пропускаются с предупреждением в лог.
     pub fn with_defaults(extra: &[PathBuf]) -> Result<Self, FilePolicyError> {
         let cwd = std::env::current_dir().ok();
@@ -223,8 +223,8 @@ impl FilePolicy {
             return Ok(());
         }
         Err(FilePolicyError(format!(
-            "`{original}` is outside the allowed directories ({}); the user can allow more with \
-             `--allow-path <dir>`",
+            "`{original}` is outside the allowed directories ({}); the user can allow more \
+             directories for the server's profile with `tracker-mcp ui`",
             self.describe_roots()
         )))
     }

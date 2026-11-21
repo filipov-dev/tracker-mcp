@@ -135,12 +135,11 @@ impl ToolRegistry {
                     tool.name.clone(),
                     format!(
                         "custom tool `{}` is disabled: it {} data in Tracker and the server runs \
-                         with {} access. Ask the user to restart the server with {} if this is \
-                         intended",
+                         with {} access. Ask the user to {} if this is intended",
                         tool.name,
                         access_verb(op.access),
                         access_name(options.max_access),
-                        access_flag(op.access),
+                        access_hint(op.access, options.local_machine),
                     ),
                 );
             } else {
@@ -320,10 +319,10 @@ impl ToolRegistry {
         if !self.max_access.allows(op.access) {
             return Some(format!(
                 "tool `{name}` is disabled: it {} data in Tracker and the server runs with {} \
-                 access. Ask the user to restart the server with {} if this change is intended",
+                 access. Ask the user to {} if this change is intended",
                 access_verb(op.access),
                 access_name(self.max_access),
-                access_flag(op.access),
+                access_hint(op.access, self.local_files),
             ));
         }
         if !self.toolset_enabled(op.toolset) {
@@ -488,12 +487,42 @@ pub fn access_name(access: AccessLevel) -> &'static str {
     }
 }
 
-/// Флаг сервера, который включает уровень доступа `access`.
+/// Флаг сервера, который включает уровень доступа `access` в HTTP-режиме: там уровень
+/// задаёт оператор флагами `serve --http`.
 pub fn access_flag(access: AccessLevel) -> &'static str {
     match access {
         AccessLevel::Read => "no extra flag",
         AccessLevel::Write => "--allow-write",
         AccessLevel::Destructive => "--allow-destructive",
+    }
+}
+
+/// Что включает уровень `access`, коротко: для `enable_with` в `api_search`. Локальный
+/// сервер (`local_machine`) берёт права из профиля, HTTP-режим — из флагов.
+pub fn access_requirement(access: AccessLevel, local_machine: bool) -> String {
+    if local_machine {
+        format!(
+            "`{}` access for the server's profile (`tracker-mcp ui`)",
+            access_name(access)
+        )
+    } else {
+        access_flag(access).to_owned()
+    }
+}
+
+/// Что пользователь делает, чтобы включить уровень `access`; фраза продолжает «Ask the user
+/// to …». У локального сервера (`local_machine`) права — настройка профиля: флаги регистрации
+/// их не расширяют, а на macOS повышение ещё и одобряется Touch ID. В HTTP-режиме уровень
+/// задают флаги `serve --http`.
+pub fn access_hint(access: AccessLevel, local_machine: bool) -> String {
+    match access {
+        AccessLevel::Read => "keep the read-only access".to_owned(),
+        level if local_machine => format!(
+            "allow `{}` access for the server's profile with `tracker-mcp ui` and restart the \
+             MCP client",
+            access_name(level)
+        ),
+        level => format!("restart the server with {}", access_flag(level)),
     }
 }
 
@@ -687,18 +716,28 @@ mod tests {
     }
 
     #[test]
-    fn unavailable_reasons_name_the_flag() {
+    fn unavailable_reasons_name_the_access() {
         let read = ToolRegistry::new(&options(AccessLevel::Read, None)).unwrap();
         let reason = read.unavailable_reason("create_issue").unwrap();
-        assert!(reason.contains("--allow-write"), "{reason}");
+        assert!(reason.contains("`write` access"), "{reason}");
+        assert!(reason.contains("tracker-mcp ui"), "{reason}");
         let reason = read.unavailable_reason("delete_queue").unwrap();
-        assert!(reason.contains("--allow-destructive"), "{reason}");
+        assert!(reason.contains("`destructive` access"), "{reason}");
         assert!(read.unavailable_reason("get_issue").is_none());
         assert!(read.unavailable_reason("no_such_tool").is_none());
 
         let write = ToolRegistry::new(&options(AccessLevel::Write, None)).unwrap();
         let reason = write.unavailable_reason("delete_queue").unwrap();
-        assert!(reason.contains("--allow-destructive") && reason.contains("write access"));
+        assert!(reason.contains("`destructive` access") && reason.contains("write access"));
+
+        // HTTP-режим: уровень задают флаги сервера.
+        let remote = ToolRegistry::new(&ServerOptions {
+            local_machine: false,
+            ..options(AccessLevel::Read, None)
+        })
+        .unwrap();
+        let reason = remote.unavailable_reason("create_issue").unwrap();
+        assert!(reason.contains("--allow-write"), "{reason}");
 
         let gaps = ToolRegistry::new(&options(AccessLevel::Read, Some(&["gaps"]))).unwrap();
         let reason = gaps.unavailable_reason("get_issue").unwrap();

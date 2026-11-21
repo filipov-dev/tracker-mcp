@@ -12,6 +12,7 @@ anyhow = "1.0.104"
 axum = { version = "0.8.9", default-features = false, features = ["http1", "tokio"] }
 clap = { version = "4.6.7", features = ["derive"] }
 dirs = "7.0.0"
+mcp-kit = { git = "https://git.sourcecraft.dev/filipov-dev/mcp-kit.git", tag = "v0.1.0" }
 reqwest = { version = "0.13.5", default-features = false, features = ["rustls", "json", "http2"] }
 rmcp = { version = "3.8.0", default-features = false, features = ["server", "transport-io", "transport-streamable-http-server"] }
 rpassword = "7.5.4"
@@ -23,8 +24,8 @@ toml = "1.2.0"
 toml_edit = "0.25.18"
 tracing = "0.1.44"
 tracing-subscriber = { version = "0.3.23", default-features = false, features = ["env-filter", "fmt", "std"] }
-tracker-api = { version = "0.2.0", path = "../tracker-api" }
-tracker-mcp-core = { version = "0.2.0", path = "../tracker-mcp-core" }
+tracker-api = { version = "0.3.0", path = "../tracker-api" }
+tracker-mcp-core = { version = "0.3.0", path = "../tracker-mcp-core" }
 
 [lints]
 workspace = true

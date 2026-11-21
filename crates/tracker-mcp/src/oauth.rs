@@ -55,7 +55,7 @@ pub fn app_instructions(profile: &str, allow_write: bool) -> String {
         "\"Read from Tracker\" (tracker:read) and \"Write to Tracker\" (tracker:write)"
     } else {
         "\"Read from Tracker\" (tracker:read); add tracker:write only if the agent will \
-         change data (connect --allow-write)"
+         change data (write access of the profile: connect --allow-write or tracker-mcp ui)"
     };
     format!(
         "Profile `{profile}` has no OAuth application yet. Create your own one in Yandex OAuth:\n\

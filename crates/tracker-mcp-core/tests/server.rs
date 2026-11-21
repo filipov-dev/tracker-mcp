@@ -150,7 +150,7 @@ async fn read_only_server_end_to_end() {
     assert!(message.contains("Задача не существует."), "{message}");
     assert!(!message.contains(TEST_TOKEN));
 
-    // Инструмент записи не зарегистрирован, вызов объясняет, какой флаг нужен.
+    // Инструмент записи не зарегистрирован, вызов объясняет, какое право нужно.
     let result = call(
         &client,
         "create_issue",
@@ -158,7 +158,11 @@ async fn read_only_server_end_to_end() {
     )
     .await;
     assert_eq!(result.is_error, Some(true));
-    assert!(text(&result).contains("--allow-write"), "{}", text(&result));
+    assert!(
+        text(&result).contains("allow `write` access"),
+        "{}",
+        text(&result)
+    );
 
     // Ошибка аргументов не доходит до API.
     let result = call(&client, "get_issue", json!({"issue": "TEST-1"})).await;
@@ -695,7 +699,7 @@ async fn api_request_respects_the_access_level() {
     assert_eq!(result.is_error, Some(true));
     let message = text(&result);
     assert!(message.contains("needs write access"), "{message}");
-    assert!(message.contains("--allow-write"), "{message}");
+    assert!(message.contains("allow `write` access"), "{message}");
     for path in ["/v3/queues/TEST", "/v3/some/unknown/thing"] {
         let result = call(
             &client,
@@ -706,7 +710,7 @@ async fn api_request_respects_the_access_level() {
         assert_eq!(result.is_error, Some(true));
         let message = text(&result);
         assert!(message.contains("needs destructive access"), "{message}");
-        assert!(message.contains("--allow-destructive"), "{message}");
+        assert!(message.contains("allow `destructive` access"), "{message}");
     }
     // Заголовки и полные URL не принимаются.
     let result = call(
@@ -744,7 +748,10 @@ async fn api_request_respects_the_access_level() {
         .iter()
         .find(|r| r["tool_name"] == "post_board")
         .unwrap();
-    assert_eq!(post["enable_with"], "--allow-write --toolsets boards");
+    assert_eq!(
+        post["enable_with"],
+        "`write` access for the server's profile (`tracker-mcp ui`), --toolsets boards"
+    );
 
     let result = call(&client, "api_search", json!({"query": "worklog"})).await;
     let value: Value = serde_json::from_str(&text(&result)).unwrap();
@@ -799,7 +806,7 @@ async fn api_request_writes_with_flags() {
         json!({"method": "DELETE", "path": "/v3/issues/TEST-1/worklog/9"}),
     )
     .await;
-    assert!(text(&result).contains("--allow-destructive"));
+    assert!(text(&result).contains("allow `destructive` access"));
     write.cancel().await.unwrap();
     server.await.unwrap();
 

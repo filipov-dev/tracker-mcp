@@ -6,7 +6,7 @@
 
 ## Таблица соответствия
 
-Все замены входят в наборы по умолчанию (`issues`, `queues`, `boards`, `users`), поэтому `--toolsets` для них не нужен. Инструменты записи регистрируются только с `--allow-write` ([уровни доступа](tools.md#уровни-доступа)).
+Все замены входят в наборы по умолчанию (`issues`, `queues`, `boards`, `users`), поэтому `--toolsets` для них не нужен. Инструменты записи регистрируются только на уровне записи профиля ([уровни доступа](tools.md#уровни-доступа)).
 
 | Предыдущий сервер | Запрос к API | `tracker-mcp` | Уровень | Набор |
 | --- | --- | --- | --- | --- |
@@ -63,7 +63,7 @@
 
 ## Что изменилось по поведению
 
-- **Только чтение по умолчанию.** У предыдущего сервера инструменты записи и `tracker_raw_request` с любым методом были доступны всегда. `tracker-mcp` без флагов регистрирует только чтение; агенту, который создаёт и меняет задачи, нужен `--allow-write`, а удаление (в том числе `DELETE` через `api_request`) — `--allow-destructive`.
+- **Только чтение по умолчанию.** У предыдущего сервера инструменты записи и `tracker_raw_request` с любым методом были доступны всегда. `tracker-mcp` без флагов регистрирует только чтение; агенту, который создаёт и меняет задачи, нужен уровень записи профиля (`connect --allow-write` или `tracker-mcp ui`), а удаление (в том числе `DELETE` через `api_request`) — уровень удаления (`--allow-destructive`). На macOS повышение прав подтверждается Touch ID или паролем.
 - **Аннотации.** Изменение задачи и переход по статусу раньше были помечены как разрушающие; теперь это уровень записи, а разрушающими считаются только удаление и необратимые изменения.
 - **Токен.** Раньше один токен лежал в переменных окружения сервера и был общим для всех агентов. Теперь у каждого агента свой профиль и токен в системном хранилище ([HTTP-режим](http.md) — токен в заголовке запроса).
 - **Файлы.** Раньше файл передавался в аргументе как base64. Теперь сервер читает его с диска по пути, поэтому файл должен лежать в разрешённом каталоге. В [HTTP-режиме](http.md#отличия-от-stdio) локальных файлов нет, и инструменты загрузки не регистрируются: агентам, которые прикладывают файлы, нужен stdio-сервер.
@@ -81,7 +81,7 @@
 | # | Вызов | Ожидается |
 | --- | --- | --- |
 | 1 | `get_user_info` `{}` | Логин пользователя токена. |
-| 2 | `api_search` `{"query": "переход по статусу"}` | `get_transitions` (зарегистрирован) и `new_transition` с подсказкой `--allow-write`. |
+| 2 | `api_search` `{"query": "переход по статусу"}` | `get_transitions` (зарегистрирован) и `new_transition` с подсказкой про уровень записи. |
 | 3 | `get_queues` `{"perPage": 5}` | Не больше пяти очередей. |
 | 4 | `get_queue` `{"queueId": "<TEST_QUEUE>", "expand": "workflows"}` | Очередь и её рабочие процессы. |
 | 5 | `search_issues` `{"body": {"queue": "<TEST_QUEUE>"}, "perPage": 5}` | Задачи очереди, `pagination.links` с `rel="next"`. |
@@ -93,12 +93,12 @@
 | 11 | `get_issue` `{"issueId": "<TEST_QUEUE>-1", "expand": "transitions,attachments"}` | Задача с переходами и файлами. |
 | 12 | `get_comments`, `get_transitions`, `issues_get_links`, `get_attachments_list` с `{"issueId": "<TEST_QUEUE>-1"}` | Списки (могут быть пустыми). |
 | 13 | `api_request` `{"method": "POST", "path": "/v3/issues/_count", "body": {"query": "Queue: <TEST_QUEUE>"}}` | То же число, что в шаге 10: читающий `POST` разрешён. |
-| 14 | `create_issue` `{"body": {"queue": "<TEST_QUEUE>", "summary": "x"}}` | Ошибка инструмента: нужен `--allow-write`. Задача не создана. |
+| 14 | `create_issue` `{"body": {"queue": "<TEST_QUEUE>", "summary": "x"}}` | Ошибка инструмента: нужен уровень записи. Задача не создана. |
 | 15 | `api_request` `{"method": "POST", "path": "/v3/issues", "body": {"queue": "<TEST_QUEUE>", "summary": "x"}}` | Ошибка: запрос выше уровня сервера не отправляется. |
 
 ### Запись
 
-Сервер с `--allow-write`: `tracker-mcp connect <клиент> --allow-write`. Для шагов с файлами положите в рабочий каталог сервера (обычно каталог проекта) файл `tracker-mcp-check.txt`.
+Сервер с уровнем записи: `tracker-mcp connect <клиент> --allow-write`. Для шагов с файлами положите в рабочий каталог сервера (обычно каталог проекта) файл `tracker-mcp-check.txt`.
 
 | # | Вызов | Ожидается |
 | --- | --- | --- |
@@ -114,12 +114,12 @@
 | 25 | `link_issue` `{"issueId": "<B>", "body": {"relationship": "depends on", "issue": "<A>"}}`, затем `issues_get_links` `{"issueId": "<B>"}` | Связь «Зависит от». |
 | 26 | `api_request` `{"method": "POST", "path": "/v3/issues/<A>/comments", "body": {"text": "Через api_request"}}` | Комментарий с этим текстом: тело запроса доходит до API. |
 | 27 | `post_board` `{"body": {"name": "tracker-mcp check", "boardPermissionsTemplate": "private", "autoFilters": {"addFilter": {"enabled": true, "liveFilter": {"fieldValues": {"queue": [{"fixed": "<TEST_QUEUE>"}]}}}}}}` | Новая доска с задачами тестовой очереди. |
-| 28 | `create_queue` `{"body": {"key": "<NEW_QUEUE>", "name": "tracker-mcp check", "lead": "<логин>", "defaultType": "task", "defaultPriority": "normal", "issueTypesConfig": [{"issueType": "task", "workflow": "<рабочий процесс из шага 4>", "resolutions": ["fixed"]}]}}` | Новая очередь. Необязательный шаг: удалить очередь можно только с `--allow-destructive` или в интерфейсе Tracker. |
-| 29 | `issues_delete_comment` `{"issueId": "<A>", "commentId": "<id>"}` | Ошибка: нужен `--allow-destructive`. |
+| 28 | `create_queue` `{"body": {"key": "<NEW_QUEUE>", "name": "tracker-mcp check", "lead": "<логин>", "defaultType": "task", "defaultPriority": "normal", "issueTypesConfig": [{"issueType": "task", "workflow": "<рабочий процесс из шага 4>", "resolutions": ["fixed"]}]}}` | Новая очередь. Необязательный шаг: удалить очередь можно только на уровне удаления или в интерфейсе Tracker. |
+| 29 | `issues_delete_comment` `{"issueId": "<A>", "commentId": "<id>"}` | Ошибка: нужен уровень удаления. |
 
 ### Удаление
 
-Необязательно, сервер с `--allow-destructive`: `delete_link_issue`, `issues_delete_comment`, `issues_delete_attachment` и `api_request` с `DELETE` на объектах из шагов выше; доску и очередь из шагов 27 и 28 — `delete_board` и `delete_queue`.
+Необязательно, сервер с уровнем удаления (`connect <клиент> --allow-destructive`): `delete_link_issue`, `issues_delete_comment`, `issues_delete_attachment` и `api_request` с `DELETE` на объектах из шагов выше; доску и очередь из шагов 27 и 28 — `delete_board` и `delete_queue`.
 
 ### HTTP-режим
 
