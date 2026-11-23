@@ -27,6 +27,10 @@ v0.3.1 tracker-mcp-v0.3.1-macos-universal.tar.gz 643f4f1d89d2e780482e03ff2975aa7
 v0.3.1 tracker-mcp-v0.3.1-linux-x86_64.tar.gz 1d3269e47ce64e71c95a9575b6a66224c1da9cb375ede51c6384ced4ae98fc25 https://github.com/filipov-dev/tracker-mcp/releases/download/v0.3.1/tracker-mcp-v0.3.1-linux-x86_64.tar.gz
 v0.3.1 tracker-mcp-v0.3.1-linux-aarch64.tar.gz 437e714661dbf3e29b0ee34e6bd4b9cc7dca88d269c379f15bb76ae4bf9b7880 https://github.com/filipov-dev/tracker-mcp/releases/download/v0.3.1/tracker-mcp-v0.3.1-linux-aarch64.tar.gz
 v0.3.1 SHA256SUMS - https://github.com/filipov-dev/tracker-mcp/releases/download/v0.3.1/SHA256SUMS
+v0.2.0 tracker-mcp-v0.2.0-macos-universal.tar.gz 28958a5f6ee438f0034eb4135f8b3cbb8316893370771e37f2bddd119bc70b81 https://github.com/filipov-dev/tracker-mcp/releases/download/v0.2.0/tracker-mcp-v0.2.0-macos-universal.tar.gz
+v0.2.0 tracker-mcp-v0.2.0-linux-x86_64.tar.gz fa260cb7ab3c36791e9b1647b250816a97033440d5846ae2c8dde800842b3e24 https://github.com/filipov-dev/tracker-mcp/releases/download/v0.2.0/tracker-mcp-v0.2.0-linux-x86_64.tar.gz
+v0.2.0 tracker-mcp-v0.2.0-linux-aarch64.tar.gz 7aa3e858cad5b3da2ceb9cd821278839c53da7aa72b676bf2ae05df011086a61 https://github.com/filipov-dev/tracker-mcp/releases/download/v0.2.0/tracker-mcp-v0.2.0-linux-aarch64.tar.gz
+v0.2.0 SHA256SUMS - https://github.com/filipov-dev/tracker-mcp/releases/download/v0.2.0/SHA256SUMS
 v0.1.1 tracker-mcp-v0.1.1-macos-universal.tar.gz 554c32630cd1bb6ab9851022536419fafa4fd23fe5e17d8288ae4a4aa821748c https://github.com/filipov-dev/tracker-mcp/releases/download/v0.1.1/tracker-mcp-v0.1.1-macos-universal.tar.gz
 v0.1.1 tracker-mcp-v0.1.1-linux-x86_64.tar.gz b5749d3df6c71710ecfd0b6985be366e0fd9f7d64f238145c6e9768e8a76390d https://github.com/filipov-dev/tracker-mcp/releases/download/v0.1.1/tracker-mcp-v0.1.1-linux-x86_64.tar.gz
 v0.1.1 tracker-mcp-v0.1.1-linux-aarch64.tar.gz 4c9a97b0686ed398db15cc03ebcc89de39aab2277197c21f78a16752fa596680 https://github.com/filipov-dev/tracker-mcp/releases/download/v0.1.1/tracker-mcp-v0.1.1-linux-aarch64.tar.gz
