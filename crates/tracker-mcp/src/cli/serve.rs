@@ -1403,16 +1403,12 @@ args = { issueId = "TEST-1" }
     #[cfg(unix)]
     #[tokio::test]
     async fn serves_tools_with_iam_tokens_from_yc() {
-        use std::os::unix::fs::PermissionsExt;
-
         let yc_dir = tempfile::tempdir().unwrap();
         let yc = yc_dir.path().join("yc");
-        std::fs::write(
+        crate::login::testing::write_script(
             &yc,
             "#!/bin/sh\necho '{\"iam_token\": \"serve-iam-token\", \"expires_at\": \"2999-01-01T00:00:00Z\"}'\n",
-        )
-        .unwrap();
-        std::fs::set_permissions(&yc, std::fs::Permissions::from_mode(0o755)).unwrap();
+        );
 
         let api = MockServer::start().await;
         Mock::given(method("GET"))

@@ -24,8 +24,8 @@ toml = "1.2.0"
 toml_edit = "0.25.18"
 tracing = "0.1.44"
 tracing-subscriber = { version = "0.3.23", default-features = false, features = ["env-filter", "fmt", "std"] }
-tracker-api = { version = "0.3.0", path = "../tracker-api" }
-tracker-mcp-core = { version = "0.3.0", path = "../tracker-mcp-core" }
+tracker-api = { version = "0.3.1", path = "../tracker-api" }
+tracker-mcp-core = { version = "0.3.1", path = "../tracker-mcp-core" }
 
 [lints]
 workspace = true

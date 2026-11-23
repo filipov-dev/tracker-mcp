@@ -20,10 +20,10 @@ Linux-бинарник собран статически: ему не нужны
 Одна команда для Linux (x86_64, aarch64) и macOS, Homebrew не нужен:
 
 ```bash
-curl -fsSL https://codeload.sourcecraft.tech/filipov-dev/tracker-mcp/tarball/refs/heads/install | tar -xzO | sh
+curl -fsSL https://codeload.github.com/filipov-dev/tracker-mcp/tar.gz/refs/heads/install | tar -xzO | sh
 ```
 
-Адрес — архив ветки `install` публичного репозитория: в ней лежит только `install.sh` со списком релизов (адреса архивов и их SHA-256), его обновляет релизный конвейер. `tar -xzO` печатает этот скрипт, `sh` выполняет.
+Адрес — архив ветки `install` копии репозитория на GitHub: в ней лежит только `install.sh` со списком релизов (адреса архивов и их SHA-256), его обновляет релизный конвейер. `tar -xzO` печатает этот скрипт, `sh` выполняет. Архивы релизов тоже лежат на GitHub. Прежний адрес `https://codeload.sourcecraft.tech/filipov-dev/tracker-mcp/tarball/refs/heads/install` работает и ставит те же архивы.
 
 Что делает скрипт:
 
@@ -38,10 +38,10 @@ curl -fsSL https://codeload.sourcecraft.tech/filipov-dev/tracker-mcp/tarball/ref
 
 ```bash
 # Конкретная версия
-curl -fsSL https://codeload.sourcecraft.tech/filipov-dev/tracker-mcp/tarball/refs/heads/install | tar -xzO | sh -s -- --version v0.1.0
+curl -fsSL https://codeload.github.com/filipov-dev/tracker-mcp/tar.gz/refs/heads/install | tar -xzO | sh -s -- --version v0.1.0
 
 # Другой каталог: бинарник попадёт в /opt/tracker/bin
-curl -fsSL https://codeload.sourcecraft.tech/filipov-dev/tracker-mcp/tarball/refs/heads/install | tar -xzO | sh -s -- --prefix /opt/tracker
+curl -fsSL https://codeload.github.com/filipov-dev/tracker-mcp/tar.gz/refs/heads/install | tar -xzO | sh -s -- --prefix /opt/tracker
 ```
 
 | Параметр | Что делает |
@@ -52,7 +52,7 @@ curl -fsSL https://codeload.sourcecraft.tech/filipov-dev/tracker-mcp/tarball/ref
 | `--force` | Переустановить, даже если эта версия уже стоит. |
 | `--list` | Показать доступные версии и выйти. |
 
-Нужны `sh`, `tar`, `curl` или `wget`, `sha256sum` или `shasum`. Чтобы прочитать скрипт перед запуском, сохраните его в файл: `curl -fsSL https://codeload.sourcecraft.tech/filipov-dev/tracker-mcp/tarball/refs/heads/install | tar -xzO > install.sh`.
+Нужны `sh`, `tar`, `curl` или `wget`, `sha256sum` или `shasum`. Чтобы прочитать скрипт перед запуском, сохраните его в файл: `curl -fsSL https://codeload.github.com/filipov-dev/tracker-mcp/tar.gz/refs/heads/install | tar -xzO > install.sh`.
 
 ## Homebrew
 
@@ -77,7 +77,7 @@ brew uninstall filipov-dev/tap/tracker-mcp
 
 ## Готовый архив
 
-Архивы и файл `SHA256SUMS` публикуются на [странице релизов](https://sourcecraft.dev/filipov-dev/tracker-mcp/releases). Имя архива: `tracker-mcp-<тег>-<платформа>.tar.gz`, например `tracker-mcp-v0.1.0-linux-x86_64.tar.gz` (для Windows — `.zip`, см. [ниже](#windows)). Внутри — каталог с бинарником `tracker-mcp`, `README.md` и лицензиями.
+Архивы и файл `SHA256SUMS` публикуются на [странице релизов](https://github.com/filipov-dev/tracker-mcp/releases). Имя архива: `tracker-mcp-<тег>-<платформа>.tar.gz`, например `tracker-mcp-v0.1.0-linux-x86_64.tar.gz` (для Windows — `.zip`, см. [ниже](#windows)). Внутри — каталог с бинарником `tracker-mcp`, `README.md` и лицензиями.
 
 Проверьте контрольную сумму (из каталога, куда скачаны архив и `SHA256SUMS`):
 
@@ -101,7 +101,7 @@ tracker-mcp --version
 
 ## Windows
 
-Для Windows есть только архив `tracker-mcp-<тег>-windows-x86_64.zip` на [странице релизов](https://sourcecraft.dev/filipov-dev/tracker-mcp/releases): установочный скрипт и Homebrew Windows не поддерживают. Внутри архива — каталог с `tracker-mcp.exe`, `README.md` и лицензиями. Бинарнику не нужен Visual C++ Redistributable и другие библиотеки. Токены хранятся в Windows Credential Manager (общие учётные данные `<профиль>.dev.filipov.tracker-mcp`), настройки профилей — в `%APPDATA%\tracker-mcp\profiles.toml`.
+Для Windows есть только архив `tracker-mcp-<тег>-windows-x86_64.zip` на [странице релизов](https://github.com/filipov-dev/tracker-mcp/releases): установочный скрипт и Homebrew Windows не поддерживают. Внутри архива — каталог с `tracker-mcp.exe`, `README.md` и лицензиями. Бинарнику не нужен Visual C++ Redistributable и другие библиотеки. Токены хранятся в Windows Credential Manager (общие учётные данные `<профиль>.dev.filipov.tracker-mcp`), настройки профилей — в `%APPDATA%\tracker-mcp\profiles.toml`.
 
 Скачайте архив и `SHA256SUMS` в один каталог и выполните в PowerShell из него (тег замените на нужный):
 
